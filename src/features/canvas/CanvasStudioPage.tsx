@@ -31,7 +31,6 @@ export function CanvasStudioPage() {
     grosor: 20,
     opacidad: 0.85,
   });
-  const [modoEdicion, setModoEdicion] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const [trazoEnEdicion, setTrazoEnEdicion] = useState<TrazoDto | null>(null);
 
@@ -229,22 +228,41 @@ export function CanvasStudioPage() {
     };
   }
 
+  function iniciarEdicionTrazo(punto: Punto) {
+    if (!comunidadId) return;
+    const trazo = encontrarTrazoCercano(punto);
+    if (!trazo) return;
+    api
+      .post(`/api/comunidades/${comunidadId}/lienzo/trazos/${trazo.id}/bloqueo`)
+      .then(() => {
+        setTrazoEnEdicion(trazo);
+        puntosEdicionRef.current = [];
+        setAviso(`Trazo de ${trazo.autorNombre} seleccionado para edición. Dibuja para reemplazarlo.`);
+      })
+      .catch((err) => setAviso(extraerMensajeError(err)));
+  }
+
+  function alDobleClic(e: React.MouseEvent<HTMLCanvasElement>) {
+    e.preventDefault();
+    const punto = coordenadasRelativas(e as unknown as React.PointerEvent<HTMLCanvasElement>);
+    iniciarEdicionTrazo(punto);
+  }
+
+  function alClicDerecho(e: React.MouseEvent<HTMLCanvasElement>) {
+    e.preventDefault();
+    const punto = coordenadasRelativas(e as unknown as React.PointerEvent<HTMLCanvasElement>);
+    iniciarEdicionTrazo(punto);
+  }
+
   function alPresionar(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!comunidadId) return;
     const punto = coordenadasRelativas(e);
     const { ancho, alto } = dimRef.current;
     const ctx = ctxRef.current;
 
-    if (modoEdicion) {
-      const trazo = encontrarTrazoCercano(punto);
-      if (!trazo) return;
-      api
-        .post(`/api/comunidades/${comunidadId}/lienzo/trazos/${trazo.id}/bloqueo`)
-        .then(() => {
-          setTrazoEnEdicion(trazo);
-          puntosEdicionRef.current = [];
-        })
-        .catch((err) => setAviso(extraerMensajeError(err)));
+    // Si mantiene Alt presionado, selecciona el trazo directamente
+    if (e.altKey) {
+      iniciarEdicionTrazo(punto);
       return;
     }
 
@@ -385,7 +403,6 @@ export function CanvasStudioPage() {
     } finally {
       await api.delete(`/api/comunidades/${comunidadId}/lienzo/trazos/${trazoEnEdicion.id}/bloqueo`).catch(() => {});
       setTrazoEnEdicion(null);
-      setModoEdicion(false);
     }
   }
 
@@ -459,7 +476,7 @@ export function CanvasStudioPage() {
               </span>
             </div>
             <p className="text-[11px] text-paper-dim hidden sm:block">
-              Lienzo responsivo de pantalla completa · Trazo colaborativo en tiempo real
+              Lienzo responsivo de pantalla completa · Haz doble clic o clic derecho sobre cualquier trazo para editarlo
             </p>
           </div>
         </div>
@@ -499,8 +516,6 @@ export function CanvasStudioPage() {
       <BrushToolbar
         herramienta={herramienta}
         onCambiar={setHerramienta}
-        modoEdicion={modoEdicion}
-        onToggleEdicion={() => setModoEdicion((v) => !v)}
         deshabilitado={!!trazoEnEdicion}
         orientacion="horizontal"
         onPublicar={abrirPublicar}
@@ -523,17 +538,19 @@ export function CanvasStudioPage() {
         <canvas
           ref={canvasRef}
           className="absolute inset-0 h-full w-full touch-none select-none"
-          style={{ cursor: modoEdicion ? 'crosshair' : 'crosshair' }}
+          style={{ cursor: 'crosshair' }}
           onPointerDown={alPresionar}
           onPointerMove={alMover}
           onPointerUp={alSoltar}
           onPointerLeave={alSoltar}
+          onDoubleClick={alDobleClic}
+          onContextMenu={alClicDerecho}
         />
 
         {/* Panel flotante de edición de trazo bloqueado */}
         {trazoEnEdicion && (
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 rounded-xl border border-amber/50 bg-ink-900/90 px-4 py-2.5 shadow-2xl backdrop-blur-md">
-            <p className="text-xs text-amber font-medium">🎯 Trazando nuevo trazo para reemplazar el anterior</p>
+            <p className="text-xs text-amber font-medium">🎯 Editando trazo de {trazoEnEdicion.autorNombre} — dibuja encima para reemplazarlo</p>
             <div className="flex gap-2">
               <button type="button" className="btn-secondary text-xs px-2.5 py-1" onClick={cancelarEdicion}>
                 Cancelar

@@ -113,10 +113,20 @@ export interface EstadoRondaResponse {
 }
 
 export interface PartyEvento {
-  tipo: 'TICK' | 'RONDA_TERMINADA' | 'BORRADOR_DISPONIBLE' | 'BORRADOR_TOMADO' | 'BORRADOR_LIBERADO' | 'TRAZO';
+  tipo:
+    | 'TICK'
+    | 'RONDA_TERMINADA'
+    | 'BORRADOR_DISPONIBLE'
+    | 'BORRADOR_TOMADO'
+    | 'BORRADOR_LIBERADO'
+    | 'HERRAMIENTA_TOMADA'
+    | 'HERRAMIENTA_LIBERADA'
+    | 'TRAZO';
   msRestantes: number | null;
   trazo: PartyTrazoDto | null;
   propietarioBorrador: string | null;
+  herramienta?: string | null;
+  propietarioHerramienta?: string | null;
 }
 
 export interface MensajePersonalDto {

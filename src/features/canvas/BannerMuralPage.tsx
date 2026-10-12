@@ -138,8 +138,6 @@ export function BannerMuralPage() {
         <BrushToolbar
           herramienta={herramienta}
           onCambiar={setHerramienta}
-          modoEdicion={false}
-          onToggleEdicion={() => {}}
           orientacion="vertical"
         />
         <div className="card relative mx-auto aspect-square w-full max-w-[700px] overflow-hidden p-0">

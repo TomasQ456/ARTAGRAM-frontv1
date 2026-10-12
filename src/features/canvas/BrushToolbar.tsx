@@ -2,6 +2,8 @@ import { useState } from 'react';
 import clsx from 'clsx';
 import type { TipoPincel } from '../../types';
 
+export type HerramientaFiesta = TipoPincel | 'BORRADOR';
+
 const PINCELES: { valor: TipoPincel; etiqueta: string; icono: string; descripcion: string }[] = [
   { valor: 'LAPIZ', etiqueta: 'Lápiz', icono: '✎', descripcion: 'Trazo fino y preciso' },
   { valor: 'MARCADOR', etiqueta: 'Marcador', icono: '🖊', descripcion: 'Bordes definidos y planos' },
@@ -50,21 +52,35 @@ export interface Herramienta {
 export function BrushToolbar({
   herramienta,
   onCambiar,
-  modoEdicion,
-  onToggleEdicion,
   deshabilitado,
   orientacion = 'horizontal',
   onPublicar,
+  modoFiesta = false,
+  herramientasTomadas = {},
+  usuarioActualNombre,
+  herramientaActivaFiesta,
+  onTomarHerramienta,
 }: {
   herramienta: Herramienta;
   onCambiar: (h: Herramienta) => void;
-  modoEdicion: boolean;
-  onToggleEdicion: () => void;
   deshabilitado?: boolean;
   orientacion?: 'horizontal' | 'vertical';
   onPublicar?: () => void;
+  // Modo fiesta: herramientas exclusivas por participante
+  modoFiesta?: boolean;
+  herramientasTomadas?: Record<string, string>;
+  usuarioActualNombre?: string;
+  herramientaActivaFiesta?: HerramientaFiesta | null;
+  onTomarHerramienta?: (h: HerramientaFiesta) => void;
 }) {
   const [categoriaColor, setCategoriaColor] = useState<'clasicos' | 'mates'>('clasicos');
+
+  const listaHerramientas: { valor: HerramientaFiesta; etiqueta: string; icono: string; descripcion: string }[] = modoFiesta
+    ? [
+        ...PINCELES,
+        { valor: 'BORRADOR', etiqueta: 'Borrador', icono: '🧹', descripcion: 'Borrador exclusivo para limpiar' },
+      ]
+    : PINCELES;
 
   if (orientacion === 'vertical') {
     return (
@@ -168,17 +184,6 @@ export function BrushToolbar({
             className="w-full accent-coral"
           />
         </div>
-
-        <button
-          type="button"
-          onClick={onToggleEdicion}
-          className={clsx(
-            'rounded-xl border px-3 py-2 text-sm font-medium transition-colors',
-            modoEdicion ? 'border-amber bg-amber/15 text-amber' : 'border-ink-600 text-paper-muted hover:border-ink-500',
-          )}
-        >
-          {modoEdicion ? 'Editando un trazo…' : 'Editar un trazo existente'}
-        </button>
       </div>
     );
   }
@@ -191,29 +196,75 @@ export function BrushToolbar({
         deshabilitado && 'opacity-50 pointer-events-none',
       )}
     >
-      {/* Sección 1: Pinceles / Herramientas de trazo */}
-      <div className="flex items-center gap-1.5 border-r border-ink-800 pr-3">
+      {/* Sección 1: Herramientas de trazo (con exclusividad por usuario en Modo Fiesta) */}
+      <div className="flex items-center gap-1.5 border-r border-ink-800 pr-3 flex-wrap">
         <span className="text-[11px] font-semibold text-paper-dim uppercase tracking-wider hidden sm:inline mr-1">
-          Pincel
+          {modoFiesta ? 'Herramientas (1 por persona)' : 'Pincel'}
         </span>
-        <div className="flex items-center gap-1">
-          {PINCELES.map((p) => (
-            <button
-              key={p.valor}
-              type="button"
-              onClick={() => onCambiar({ ...herramienta, tipoPincel: p.valor })}
-              className={clsx(
-                'flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all',
-                herramienta.tipoPincel === p.valor
-                  ? 'border-violet bg-violet/20 text-paper shadow-sm'
-                  : 'border-ink-700/60 bg-ink-800/40 text-paper-muted hover:border-ink-600 hover:text-paper',
-              )}
-              title={`${p.etiqueta}: ${p.descripcion}`}
-            >
-              <span className="text-sm leading-none">{p.icono}</span>
-              <span className="hidden md:inline">{p.etiqueta}</span>
-            </button>
-          ))}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {listaHerramientas.map((p) => {
+            if (modoFiesta) {
+              const dueno = herramientasTomadas[p.valor];
+              const tomadoPorOtro = !!dueno && dueno !== usuarioActualNombre;
+              const tomadoPorMi = herramientaActivaFiesta === p.valor;
+
+              return (
+                <button
+                  key={p.valor}
+                  type="button"
+                  disabled={tomadoPorOtro}
+                  onClick={() => onTomarHerramienta?.(p.valor)}
+                  className={clsx(
+                    'relative flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all',
+                    tomadoPorMi
+                      ? 'border-emerald-500 bg-emerald-500/20 text-emerald-200 ring-2 ring-emerald-500/30 shadow-sm'
+                      : tomadoPorOtro
+                        ? 'border-ink-800 bg-ink-950/70 text-ink-500 cursor-not-allowed opacity-60'
+                        : 'border-ink-700/60 bg-ink-800/40 text-paper-muted hover:border-paper/40 hover:text-paper',
+                  )}
+                  title={
+                    tomadoPorOtro
+                      ? `${p.etiqueta}: Tomado por ${dueno}`
+                      : tomadoPorMi
+                        ? `${p.etiqueta}: En uso por ti`
+                        : `${p.etiqueta}: Disponible para tomar`
+                  }
+                >
+                  <span className="text-sm leading-none">{p.icono}</span>
+                  <span>{p.etiqueta}</span>
+                  {dueno && (
+                    <span
+                      className={clsx(
+                        'text-[10px] px-1 py-0.2 rounded font-semibold',
+                        tomadoPorMi ? 'bg-emerald-500/30 text-emerald-300' : 'bg-ink-800 text-ink-400',
+                      )}
+                    >
+                      {tomadoPorMi ? 'Tú' : dueno}
+                    </span>
+                  )}
+                </button>
+              );
+            }
+
+            // Modo Lienzo normal (sin borrador, todos los pinceles disponibles)
+            return (
+              <button
+                key={p.valor}
+                type="button"
+                onClick={() => onCambiar({ ...herramienta, tipoPincel: p.valor as TipoPincel })}
+                className={clsx(
+                  'flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all',
+                  herramienta.tipoPincel === p.valor
+                    ? 'border-violet bg-violet/20 text-paper shadow-sm'
+                    : 'border-ink-700/60 bg-ink-800/40 text-paper-muted hover:border-ink-600 hover:text-paper',
+                )}
+                title={`${p.etiqueta}: ${p.descripcion}`}
+              >
+                <span className="text-sm leading-none">{p.icono}</span>
+                <span className="hidden md:inline">{p.etiqueta}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -333,24 +384,9 @@ export function BrushToolbar({
         </div>
       </div>
 
-      {/* Sección 4: Modo Edición y Publicar */}
-      <div className="flex items-center gap-2 border-l border-ink-800 pl-3">
-        <button
-          type="button"
-          onClick={onToggleEdicion}
-          className={clsx(
-            'rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors flex items-center gap-1.5',
-            modoEdicion
-              ? 'border-amber bg-amber/20 text-amber shadow-sm animate-pulse'
-              : 'border-ink-700 bg-ink-800/40 text-paper-muted hover:border-ink-600 hover:text-paper',
-          )}
-          title="Toca un trazo ya pintado para seleccionarlo y redibujarlo"
-        >
-          <span>🎯</span>
-          <span className="hidden sm:inline">{modoEdicion ? 'Editando trazo' : 'Editar trazo'}</span>
-        </button>
-
-        {onPublicar && (
+      {/* Sección 4: Publicar (en estudio normal) */}
+      {onPublicar && (
+        <div className="flex items-center gap-2 border-l border-ink-800 pl-3">
           <button
             type="button"
             onClick={onPublicar}
@@ -360,8 +396,8 @@ export function BrushToolbar({
             <span>🎨</span>
             <span>Publicar</span>
           </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
