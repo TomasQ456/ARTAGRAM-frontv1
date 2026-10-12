@@ -59,25 +59,26 @@ jobs:
       - name: Determinar URLs del Backend
         id: backend_urls
         run: |
+          TARGET_HOST="${{ secrets.BACKEND_HOST || secrets.EC2_HOST }}"
           if [ -n "${{ vars.VITE_API_BASE_URL }}" ]; then
             API_URL="${{ vars.VITE_API_BASE_URL }}"
-          elif [ -n "${{ secrets.EC2_HOST }}" ]; then
-            API_URL="http://${{ secrets.EC2_HOST }}:8080"
+          elif [ -n "${TARGET_HOST}" ]; then
+            API_URL="http://${TARGET_HOST}:8080"
           else
             API_URL="http://localhost:8080"
           fi
 
           if [ -n "${{ vars.VITE_WS_URL }}" ]; then
             WS_URL="${{ vars.VITE_WS_URL }}"
-          elif [ -n "${{ secrets.EC2_HOST }}" ]; then
-            WS_URL="ws://${{ secrets.EC2_HOST }}:8080/ws"
+          elif [ -n "${TARGET_HOST}" ]; then
+            WS_URL="ws://${TARGET_HOST}:8080/ws"
           else
             WS_URL="ws://localhost:8080/ws"
           fi
 
           echo "api_url=${API_URL}" >> $GITHUB_OUTPUT
           echo "ws_url=${WS_URL}" >> $GITHUB_OUTPUT
-          echo "Compilando frontend apuntando a: API=${API_URL}, WS=${WS_URL}"
+          echo "Compilando frontend apuntando al backend en: API=${API_URL}, WS=${WS_URL}"
 
       - name: Build y push imagen Docker
         uses: docker/build-push-action@v5
