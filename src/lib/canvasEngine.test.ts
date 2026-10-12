@@ -149,4 +149,26 @@ describe('dibujarBorrado', () => {
     expect(ctx.lineTo).toHaveBeenCalledTimes(1);
     expect(ctx.stroke).toHaveBeenCalledTimes(1);
   });
+
+  it('soporta dimensiones rectangulares distintas de ancho y alto adaptadas a la pantalla', () => {
+    const ctx = crearContextoFalso();
+    const estilo: EstiloPincel = { tipoPincel: 'PLUMA', colorHex: '#123456', grosor: 15, opacidad: 0.9 };
+    const ancho = 1200;
+    const alto = 800;
+
+    dibujarSegmento(ctx, estilo, { x: 0.2, y: 0.4 }, { x: 0.8, y: 0.9 }, ancho, alto);
+
+    expect(ctx.moveTo).toHaveBeenCalledWith(0.2 * ancho, 0.4 * alto);
+    expect(ctx.lineTo).toHaveBeenCalledWith(0.8 * ancho, 0.9 * alto);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+  });
+
+  it('aplica blur suave a AEROGRAFO', () => {
+    const ctx = crearContextoFalso();
+    const estilo: EstiloPincel = { tipoPincel: 'AEROGRAFO', colorHex: '#FFAA00', grosor: 25, opacidad: 0.8 };
+
+    dibujarSegmento(ctx, estilo, { x: 0.1, y: 0.1 }, { x: 0.3, y: 0.3 }, 500, 500);
+
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+  });
 });

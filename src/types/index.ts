@@ -1,4 +1,4 @@
-export type TipoPincel = 'LAPIZ' | 'MARCADOR' | 'ACUARELA';
+export type TipoPincel = 'LAPIZ' | 'MARCADOR' | 'ACUARELA' | 'PLUMA' | 'AEROGRAFO';
 
 export interface Punto {
   x: number;

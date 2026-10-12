@@ -15,8 +15,8 @@ export interface EstiloPincel {
  * de abajo (multiply) y se ve mas suave. Un pincel desconocido (version
  * vieja del catalogo) cae al basico en vez de fallar (nota tecnica de HU-13).
  */
-function aplicarEstilo(ctx: CanvasRenderingContext2D, estilo: EstiloPincel, ladoPx: number) {
-  const grosorPx = (estilo.grosor / 100) * ladoPx * 0.6;
+function aplicarEstilo(ctx: CanvasRenderingContext2D, estilo: EstiloPincel, escalaPx: number) {
+  const grosorPx = (estilo.grosor / 100) * escalaPx * 0.6;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
@@ -33,7 +33,22 @@ function aplicarEstilo(ctx: CanvasRenderingContext2D, estilo: EstiloPincel, lado
       ctx.globalAlpha = estilo.opacidad;
       ctx.lineWidth = grosorPx * 1.15;
       ctx.strokeStyle = estilo.colorHex;
+      ctx.lineCap = 'square';
       ctx.filter = 'none';
+      break;
+    case 'PLUMA':
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = estilo.opacidad;
+      ctx.lineWidth = Math.max(0.8, grosorPx * 0.4);
+      ctx.strokeStyle = estilo.colorHex;
+      ctx.filter = 'none';
+      break;
+    case 'AEROGRAFO':
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = Math.min(0.6, estilo.opacidad * 0.45);
+      ctx.lineWidth = grosorPx * 2.2;
+      ctx.strokeStyle = estilo.colorHex;
+      ctx.filter = 'blur(2px)';
       break;
     case 'LAPIZ':
     default:
@@ -57,52 +72,74 @@ export function dibujarSegmento(
   estilo: EstiloPincel,
   desde: Punto,
   hasta: Punto,
-  ladoPx: number,
+  anchoPx: number,
+  altoPx: number = anchoPx,
 ) {
-  aplicarEstilo(ctx, estilo, ladoPx);
+  const escala = Math.min(anchoPx, altoPx);
+  aplicarEstilo(ctx, estilo, escala);
   ctx.beginPath();
-  ctx.moveTo(desde.x * ladoPx, desde.y * ladoPx);
-  ctx.lineTo(hasta.x * ladoPx, hasta.y * ladoPx);
+  ctx.moveTo(desde.x * anchoPx, desde.y * altoPx);
+  ctx.lineTo(hasta.x * anchoPx, hasta.y * altoPx);
   ctx.stroke();
   restaurar(ctx);
 }
 
-export function dibujarPunto(ctx: CanvasRenderingContext2D, estilo: EstiloPincel, punto: Punto, ladoPx: number) {
-  aplicarEstilo(ctx, estilo, ladoPx);
+export function dibujarPunto(
+  ctx: CanvasRenderingContext2D,
+  estilo: EstiloPincel,
+  punto: Punto,
+  anchoPx: number,
+  altoPx: number = anchoPx,
+) {
+  const escala = Math.min(anchoPx, altoPx);
+  aplicarEstilo(ctx, estilo, escala);
   const radio = ctx.lineWidth / 2;
   ctx.beginPath();
-  ctx.arc(punto.x * ladoPx, punto.y * ladoPx, radio, 0, Math.PI * 2);
+  ctx.arc(punto.x * anchoPx, punto.y * altoPx, radio, 0, Math.PI * 2);
   ctx.fillStyle = estilo.colorHex;
   ctx.fill();
   restaurar(ctx);
 }
 
-export function dibujarTrazoCompleto(ctx: CanvasRenderingContext2D, estilo: EstiloPincel, puntos: Punto[], ladoPx: number) {
+export function dibujarTrazoCompleto(
+  ctx: CanvasRenderingContext2D,
+  estilo: EstiloPincel,
+  puntos: Punto[],
+  anchoPx: number,
+  altoPx: number = anchoPx,
+) {
   if (puntos.length === 0) return;
   if (puntos.length === 1) {
-    dibujarPunto(ctx, estilo, puntos[0], ladoPx);
+    dibujarPunto(ctx, estilo, puntos[0], anchoPx, altoPx);
     return;
   }
   for (let i = 0; i < puntos.length - 1; i++) {
-    dibujarSegmento(ctx, estilo, puntos[i], puntos[i + 1], ladoPx);
+    dibujarSegmento(ctx, estilo, puntos[i], puntos[i + 1], anchoPx, altoPx);
   }
 }
 
 /** Borrador del modo fiesta: "quita" pintura en vez de agregar color. */
-export function dibujarBorrado(ctx: CanvasRenderingContext2D, puntos: Punto[], grosor: number, ladoPx: number) {
+export function dibujarBorrado(
+  ctx: CanvasRenderingContext2D,
+  puntos: Punto[],
+  grosor: number,
+  anchoPx: number,
+  altoPx: number = anchoPx,
+) {
   if (puntos.length === 0) return;
+  const escala = Math.min(anchoPx, altoPx);
   ctx.save();
   ctx.globalCompositeOperation = 'destination-out';
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.lineWidth = (grosor / 100) * ladoPx * 0.9;
+  ctx.lineWidth = (grosor / 100) * escala * 0.9;
   ctx.beginPath();
-  ctx.moveTo(puntos[0].x * ladoPx, puntos[0].y * ladoPx);
+  ctx.moveTo(puntos[0].x * anchoPx, puntos[0].y * altoPx);
   for (const p of puntos.slice(1)) {
-    ctx.lineTo(p.x * ladoPx, p.y * ladoPx);
+    ctx.lineTo(p.x * anchoPx, p.y * altoPx);
   }
   if (puntos.length === 1) {
-    ctx.lineTo(puntos[0].x * ladoPx + 0.1, puntos[0].y * ladoPx);
+    ctx.lineTo(puntos[0].x * anchoPx + 0.1, puntos[0].y * altoPx);
   }
   ctx.stroke();
   ctx.restore();

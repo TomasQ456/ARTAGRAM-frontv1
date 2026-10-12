@@ -135,7 +135,13 @@ export function BannerMuralPage() {
       {aviso && <div className="mb-3 rounded-lg border border-coral/40 bg-coral/10 px-3 py-2 text-sm text-coral-light">{aviso}</div>}
 
       <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
-        <BrushToolbar herramienta={herramienta} onCambiar={setHerramienta} modoEdicion={false} onToggleEdicion={() => {}} />
+        <BrushToolbar
+          herramienta={herramienta}
+          onCambiar={setHerramienta}
+          modoEdicion={false}
+          onToggleEdicion={() => {}}
+          orientacion="vertical"
+        />
         <div className="card relative mx-auto aspect-square w-full max-w-[700px] overflow-hidden p-0">
           {cargando && (
             <div className="absolute inset-0 z-10 grid place-items-center bg-ink-900/60 backdrop-blur-sm">

@@ -5,13 +5,21 @@ import { Button } from '../../components/ui/Button';
 import { TextField } from '../../components/ui/TextField';
 import type { PublicacionDto, SugerenciaEtiquetasResultado } from '../../types';
 
-export function PublishWizard({ onPublicado, onCerrar }: { onPublicado: (p: PublicacionDto) => void; onCerrar: () => void }) {
+export function PublishWizard({
+  archivoInicial,
+  onPublicado,
+  onCerrar,
+}: {
+  archivoInicial?: File | null;
+  onPublicado: (p: PublicacionDto) => void;
+  onCerrar: () => void;
+}) {
   const [paso, setPaso] = useState<1 | 2>(1);
   const [titulo, setTitulo] = useState('');
   const [descripcion, setDescripcion] = useState('');
   const [etiquetasTexto, setEtiquetasTexto] = useState('');
-  const [obraFinal, setObraFinal] = useState<File | null>(null);
-  const [previewObra, setPreviewObra] = useState<string | null>(null);
+  const [obraFinal, setObraFinal] = useState<File | null>(archivoInicial ?? null);
+  const [previewObra, setPreviewObra] = useState<string | null>(archivoInicial ? URL.createObjectURL(archivoInicial) : null);
   const [imagenesProceso, setImagenesProceso] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
