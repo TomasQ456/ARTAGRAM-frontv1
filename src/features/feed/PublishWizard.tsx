@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { api, extraerMensajeError } from '../../lib/api';
 import { Button } from '../../components/ui/Button';
 import { TextField } from '../../components/ui/TextField';
-import type { PublicacionDto } from '../../types';
+import type { PublicacionDto, SugerenciaEtiquetasResultado } from '../../types';
 
 export function PublishWizard({ onPublicado, onCerrar }: { onPublicado: (p: PublicacionDto) => void; onCerrar: () => void }) {
   const [paso, setPaso] = useState<1 | 2>(1);
@@ -15,6 +15,7 @@ export function PublishWizard({ onPublicado, onCerrar }: { onPublicado: (p: Publ
   const [imagenesProceso, setImagenesProceso] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
+  const [sugiriendoIa, setSugiriendoIa] = useState(false);
 
   function elegirObraFinal(e: React.ChangeEvent<HTMLInputElement>) {
     const archivo = e.target.files?.[0] ?? null;
@@ -25,6 +26,33 @@ export function PublishWizard({ onPublicado, onCerrar }: { onPublicado: (p: Publ
   function elegirProceso(e: React.ChangeEvent<HTMLInputElement>) {
     const archivos = Array.from(e.target.files ?? []).slice(0, 10);
     setImagenesProceso(archivos);
+  }
+
+  async function sugerirConIa() {
+    if (!obraFinal) {
+      setError('Sube primero la imagen final para que la IA pueda analizarla');
+      return;
+    }
+    setError(null);
+    setSugiriendoIa(true);
+    try {
+      const form = new FormData();
+      form.append('imagen', obraFinal);
+      const { data } = await api.post<SugerenciaEtiquetasResultado>('/api/ia/sugerencias', form);
+      if (data.tituloSugerido && !titulo.trim()) {
+        setTitulo(data.tituloSugerido);
+      }
+      if (data.descripcionSugerida && !descripcion.trim()) {
+        setDescripcion(data.descripcionSugerida);
+      }
+      if (data.etiquetas && data.etiquetas.length > 0) {
+        setEtiquetasTexto(data.etiquetas.join(', '));
+      }
+    } catch (err) {
+      setError(extraerMensajeError(err, 'No se pudieron generar sugerencias con IA'));
+    } finally {
+      setSugiriendoIa(false);
+    }
   }
 
   async function publicar() {
@@ -98,6 +126,17 @@ export function PublishWizard({ onPublicado, onCerrar }: { onPublicado: (p: Publ
               )}
               <input type="file" accept="image/*" className="hidden" onChange={elegirObraFinal} />
             </label>
+            {previewObra && (
+              <button
+                type="button"
+                onClick={sugerirConIa}
+                disabled={sugiriendoIa}
+                className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-violet/40 bg-violet/10 py-1.5 text-xs font-medium text-violet transition-colors hover:bg-violet/20 disabled:opacity-50"
+              >
+                <span>✨</span>
+                <span>{sugiriendoIa ? 'Analizando con IA…' : 'Sugerir con IA'}</span>
+              </button>
+            )}
           </div>
         </div>
       )}

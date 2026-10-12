@@ -137,6 +137,44 @@ export interface MensajeComunidadDto {
   creadoEn: string;
 }
 
+export interface ComentarioDto {
+  id: string;
+  publicacionId: string;
+  autorId: string;
+  autorNombre: string;
+  contenido: string;
+  creadoEn: string;
+}
+
+export interface ComentarioEvento {
+  tipo: 'COMENTARIO_CREADO' | 'COMENTARIO_ELIMINADO';
+  comentario: ComentarioDto;
+  contadorComentarios: number;
+}
+
+export interface AnalisisTecnicoResultado {
+  puntosFuertes: string[];
+  areasMejora: string[];
+  consejos: string[];
+  scoreEstimado: number;
+}
+
+export interface AnalisisObraDto {
+  id: string;
+  publicacionId: string;
+  solicitanteId: string;
+  tipo: 'TECNICO' | 'SUGERENCIA_ETIQUETAS';
+  resultadoJson: string;
+  modelo: string;
+  creadoEn: string;
+}
+
+export interface SugerenciaEtiquetasResultado {
+  tituloSugerido: string;
+  descripcionSugerida: string;
+  etiquetas: string[];
+}
+
 export interface PublicacionDto {
   id: string;
   autorId: string;
@@ -149,6 +187,9 @@ export interface PublicacionDto {
   contadorLikes: number;
   meGusta: boolean;
   creadoEn: string;
+  contadorComentarios?: number;
+  version?: number;
+  editadoEn?: string | null;
 }
 
 export interface LikeResponse {
