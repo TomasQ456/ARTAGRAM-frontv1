@@ -2,7 +2,7 @@ import { useState } from 'react';
 import clsx from 'clsx';
 import type { TipoPincel } from '../../types';
 
-export const PINCELES: { valor: TipoPincel; etiqueta: string; icono: string; descripcion: string }[] = [
+const PINCELES: { valor: TipoPincel; etiqueta: string; icono: string; descripcion: string }[] = [
   { valor: 'LAPIZ', etiqueta: 'Lápiz', icono: '✎', descripcion: 'Trazo fino y preciso' },
   { valor: 'MARCADOR', etiqueta: 'Marcador', icono: '🖊', descripcion: 'Bordes definidos y planos' },
   { valor: 'ACUARELA', etiqueta: 'Acuarela', icono: '🖌', descripcion: 'Efecto suave y traslúcido' },
@@ -10,7 +10,7 @@ export const PINCELES: { valor: TipoPincel; etiqueta: string; icono: string; des
   { valor: 'AEROGRAFO', etiqueta: 'Spray', icono: '💨', descripcion: 'Aerógrafo difuminado' },
 ];
 
-export const COLORES_CLASICOS = [
+const COLORES_CLASICOS = [
   '#0B0912', // Negro
   '#F5F1EA', // Blanco marfil
   '#6B7280', // Gris neutro
@@ -24,7 +24,7 @@ export const COLORES_CLASICOS = [
   '#EC4899', // Rosa
 ];
 
-export const COLORES_MATES = [
+const COLORES_MATES = [
   '#D98A7D', // Rosa mate
   '#C87D55', // Terracota
   '#8E9F8B', // Verde salvia
