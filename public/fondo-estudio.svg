@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="380" height="380" viewBox="0 0 380 380">
+  <defs>
+    <filter id="brillo" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="2.4" result="difuminado" />
+      <feMerge>
+        <feMergeNode in="difuminado" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <g id="pincel" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 46 L34 14" stroke-width="4" />
+      <path d="M30 10 C36 4 44 4 48 10 C52 16 46 22 40 24 L30 24 Z" stroke-width="3.5" />
+      <path d="M2 46 L10 50 L6 40 Z" stroke-width="3" />
+    </g>
+
+    <g id="lapiz" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 44 L34 14 L44 24 L14 54 Z" stroke-width="3.5" />
+      <path d="M4 44 L10 50 L14 54" stroke-width="3" />
+      <path d="M30 18 L40 28" stroke-width="3" />
+    </g>
+
+    <g id="paleta" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M28 4 C43 4 54 15 54 28 C54 38 47 41 41 39 C36 37 38 32 33 31 C24 29 24 20 16 19 C7 18 5 10 12 6 C16 4 22 4 28 4 Z" stroke-width="3.5" />
+      <circle cx="16" cy="15" r="2.6" stroke-width="2.6" />
+      <circle cx="30" cy="12" r="2.6" stroke-width="2.6" />
+      <circle cx="43" cy="18" r="2.6" stroke-width="2.6" />
+      <circle cx="46" cy="30" r="2.6" stroke-width="2.6" />
+    </g>
+
+    <g id="camara" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="4" y="16" width="46" height="32" rx="6" stroke-width="3.5" />
+      <path d="M17 16 L22 8 H32 L37 16" stroke-width="3.5" />
+      <circle cx="27" cy="32" r="10" stroke-width="3.5" />
+      <circle cx="27" cy="32" r="4" stroke-width="2.6" />
+    </g>
+
+    <g id="obturador" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="18" cy="18" r="17" stroke-width="3.2" />
+      <circle cx="18" cy="18" r="9" stroke-width="2.6" />
+    </g>
+
+    <g id="gota" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2 C20 14 22 20 22 25 C22 32 17 37 12 37 C7 37 2 32 2 25 C2 20 4 14 12 2 Z" stroke-width="3.2" />
+    </g>
+  </defs>
+
+  <g filter="url(#brillo)" opacity="0.5">
+    <use href="#pincel" stroke="#2FD9C4" transform="translate(18,18) rotate(-18)" />
+    <use href="#paleta" stroke="#8B5CF6" transform="translate(150,-6) rotate(6)" />
+    <use href="#lapiz" stroke="#2FD9C4" transform="translate(250,30) rotate(10)" />
+    <use href="#camara" stroke="#8B5CF6" transform="translate(60,90)" />
+    <use href="#obturador" stroke="#2FD9C4" transform="translate(210,110)" />
+    <use href="#gota" stroke="#8B5CF6" transform="translate(320,130) rotate(12)" />
+
+    <use href="#pincel" stroke="#8B5CF6" transform="translate(300,220) rotate(-30)" />
+    <use href="#lapiz" stroke="#2FD9C4" transform="translate(10,210) rotate(-8)" />
+    <use href="#paleta" stroke="#2FD9C4" transform="translate(120,240) rotate(-4)" />
+    <use href="#camara" stroke="#8B5CF6" transform="translate(230,290)" />
+    <use href="#obturador" stroke="#8B5CF6" transform="translate(30,300)" />
+    <use href="#gota" stroke="#2FD9C4" transform="translate(160,150) rotate(-20)" />
+
+    <use href="#pincel" stroke="#2FD9C4" transform="translate(340,20) rotate(20)" />
+    <use href="#lapiz" stroke="#8B5CF6" transform="translate(90,330) rotate(14)" />
+    <use href="#gota" stroke="#2FD9C4" transform="translate(280,340) rotate(-10)" />
+  </g>
+</svg>

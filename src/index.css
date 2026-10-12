@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-ink-900 text-paper font-sans antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(139, 92, 246, 0.18), transparent),
+      radial-gradient(ellipse 60% 40% at 100% 100%, rgba(255, 107, 87, 0.10), transparent);
+    background-attachment: fixed;
+  }
+
+  h1, h2, h3, h4 {
+    @apply font-display;
+  }
+
+  ::selection {
+    @apply bg-coral/30 text-paper;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-ink-600 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-ink-500;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply relative inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 font-semibold text-sm
+      transition-all duration-200 ease-out active:scale-[0.96] disabled:opacity-50 disabled:pointer-events-none disabled:hover:translate-y-0
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-900;
+  }
+  .btn-primary {
+    @apply btn text-ink-950 bg-gradient-to-r from-coral via-coral to-amber bg-[length:170%_100%] bg-left
+      shadow-glow-coral hover:bg-right hover:-translate-y-0.5 hover:shadow-[0_10px_30px_-6px_rgba(255,107,87,0.65)]
+      focus-visible:ring-coral;
+  }
+  .btn-secondary {
+    @apply btn text-paper bg-ink-800 border border-ink-500/70
+      hover:border-violet/70 hover:text-violet hover:-translate-y-0.5 hover:shadow-[0_8px_24px_-8px_rgba(139,92,246,0.55)]
+      focus-visible:ring-violet;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-paper-muted
+      hover:text-paper hover:bg-paper/10 hover:-translate-y-0.5 focus-visible:ring-violet;
+  }
+  .card {
+    @apply bg-ink-800/80 border border-ink-600/60 rounded-2xl shadow-glow backdrop-blur-sm;
+  }
+  .input {
+    @apply w-full rounded-xl bg-ink-900/80 border border-ink-600 px-3.5 py-2.5 text-sm text-paper
+      placeholder:text-paper-dim/70 outline-none transition-colors
+      focus:border-violet focus:ring-1 focus:ring-violet;
+  }
+  .label {
+    @apply text-xs font-medium uppercase tracking-wide text-paper-muted;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full bg-ink-700 px-2.5 py-1 text-xs text-paper-muted border border-ink-600;
+  }
+
+  /* Superficies claras para las páginas públicas (landing/login/registro) que
+     van sobre el fondo acuarela — mismo sistema, paleta invertida. */
+  .card-light {
+    @apply bg-paper border border-ink-950/10 rounded-2xl shadow-[0_20px_60px_-12px_rgba(11,9,18,0.35)];
+  }
+  .input-light {
+    @apply w-full rounded-xl bg-white border border-ink-950/10 px-3.5 py-2.5 text-sm text-ink-950
+      placeholder:text-ink-950/35 outline-none transition-colors
+      focus:border-violet focus:ring-1 focus:ring-violet;
+  }
+  .label-light {
+    @apply text-xs font-medium uppercase tracking-wide text-ink-950/55;
+  }
+}

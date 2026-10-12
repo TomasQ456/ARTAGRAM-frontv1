@@ -1,0 +1,143 @@
+name: CI/CD - Frontend Pruebas, Docker y Despliegue en AWS
+
+# Este workflow realiza:
+# 1. Linting y pruebas unitarias de Frontend (Vitest & Oxlint).
+# 2. Build multi-stage de la imagen Docker (con Vite y Nginx) y publicación en GitHub Container Registry (ghcr.io).
+# 3. Despliegue continuo (CD) en la máquina AWS EC2 vía SSH.
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    name: Pruebas y Linting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Linting de código
+        run: npm run lint
+
+      - name: Pruebas unitarias (Vitest)
+        run: npm run test
+
+  build-and-push:
+    name: Build y Push Docker a GHCR
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generar nombre de imagen en minúsculas (requerido por Docker)
+        run: |
+          LOWER_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NAME=ghcr.io/${LOWER_OWNER}/artagram-frontend" >> $GITHUB_ENV
+          echo "Imagen configurada: ghcr.io/${LOWER_OWNER}/artagram-frontend"
+
+      - name: Login en GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Determinar URLs del Backend
+        id: backend_urls
+        run: |
+          if [ -n "${{ vars.VITE_API_BASE_URL }}" ]; then
+            API_URL="${{ vars.VITE_API_BASE_URL }}"
+          elif [ -n "${{ secrets.EC2_HOST }}" ]; then
+            API_URL="http://${{ secrets.EC2_HOST }}:8080"
+          else
+            API_URL="http://localhost:8080"
+          fi
+
+          if [ -n "${{ vars.VITE_WS_URL }}" ]; then
+            WS_URL="${{ vars.VITE_WS_URL }}"
+          elif [ -n "${{ secrets.EC2_HOST }}" ]; then
+            WS_URL="ws://${{ secrets.EC2_HOST }}:8080/ws"
+          else
+            WS_URL="ws://localhost:8080/ws"
+          fi
+
+          echo "api_url=${API_URL}" >> $GITHUB_OUTPUT
+          echo "ws_url=${WS_URL}" >> $GITHUB_OUTPUT
+          echo "Compilando frontend apuntando a: API=${API_URL}, WS=${WS_URL}"
+
+      - name: Build y push imagen Docker
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          build-args: |
+            VITE_API_BASE_URL=${{ steps.backend_urls.outputs.api_url }}
+            VITE_WS_URL=${{ steps.backend_urls.outputs.ws_url }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Desplegar en AWS EC2
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validar secretos de AWS EC2
+        id: check_secrets
+        run: |
+          if [ -n "${{ secrets.EC2_HOST }}" ] && [ -n "${{ secrets.EC2_SSH_KEY }}" ]; then
+            echo "configured=true" >> $GITHUB_OUTPUT
+            echo "Secretos de AWS detectados, iniciando despliegue..."
+          else
+            echo "configured=false" >> $GITHUB_OUTPUT
+            echo "::notice ::Despliegue a AWS EC2 omitido: Los secretos EC2_HOST y/o EC2_SSH_KEY no están configurados en el repositorio. Para activarlo, agrégalos en Settings > Secrets."
+          fi
+
+      - name: Desplegar contenedor frontend en EC2
+        if: steps.check_secrets.outputs.configured == 'true'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER || 'ubuntu' }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd ~/artagram
+            echo "${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            LOWER_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+            FRONTEND_IMAGE="ghcr.io/${LOWER_OWNER}/artagram-frontend:latest"
+            docker pull "${FRONTEND_IMAGE}"
+            
+            # Detener y reiniciar contenedor frontend
+            docker stop artagram-frontend 2>/dev/null || true
+            docker rm artagram-frontend 2>/dev/null || true
+            
+            docker run -d \
+              --name artagram-frontend \
+              --restart unless-stopped \
+              -p 80:80 \
+              -p 5173:80 \
+              "${FRONTEND_IMAGE}"
+            
+            docker image prune -f
