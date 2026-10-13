@@ -1,13 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, extraerMensajeError } from '../../lib/api';
 import { stompService } from '../../lib/stompClient';
 import { useAuthStore } from '../../lib/authStore';
-import { dibujarPunto, dibujarSegmento, dibujarTrazoCompleto, type EstiloPincel } from '../../lib/canvasEngine';
+import { anchoDeLineaPx, dibujarPunto, dibujarSegmento, dibujarTrazoCompleto, type EstiloPincel } from '../../lib/canvasEngine';
 import { BrushToolbar, type Herramienta } from './BrushToolbar';
 import { PublishWizard } from '../feed/PublishWizard';
 import { generarUUID } from '../../lib/uuid';
-import type { BloqueoEvento, ComunidadResponse, Punto, TrazoDto, TrazoEvento } from '../../types';
+import {
+  anclaOpuesta,
+  cajaDe,
+  distanciaAlTrazoPx,
+  escalar,
+  esquinaDe,
+  factorDeEscala,
+  mover,
+  type Esquina,
+} from '../../lib/trazoGeometria';
+import { CajaSeleccion } from './CajaSeleccion';
+import type { BloqueoEvento, BloqueoTrazoResponse, ComunidadResponse, Punto, TrazoDto, TrazoEvento } from '../../types';
 
 interface TrazoRemotoEnProgreso {
   estilo: EstiloPincel;
@@ -22,6 +33,21 @@ interface TrazoLocalPendiente {
   capa: number;
   creadoEn: number;
 }
+
+/** Trazo que tengo bloqueado (HU-15) y que estoy escalando o moviendo con la caja. */
+interface SeleccionTrazo {
+  trazo: TrazoDto;
+  puntos: Punto[];
+}
+
+type Arrastre =
+  | { tipo: 'escala'; ancla: Punto; esquinaOriginal: Punto; puntosIniciales: Punto[] }
+  | { tipo: 'mover'; inicio: Punto; puntosIniciales: Punto[] };
+
+/** El bloqueo vence a los 30 s en el backend: se renueva bastante antes. */
+const HEARTBEAT_BLOQUEO_MS = 10_000;
+/** Durante el arrastre se envia la edicion como mucho cada tanto, para que los demas la vean en vivo. */
+const INTERVALO_EDICION_EN_VIVO_MS = 120;
 
 interface TrazoPropioActivo {
   id: string;
@@ -49,7 +75,16 @@ export function CanvasStudioPage() {
     opacidad: 0.85,
   });
   const [aviso, setAviso] = useState<string | null>(null);
-  const [trazoEnEdicion, setTrazoEnEdicion] = useState<TrazoDto | null>(null);
+  const [modoEditar, setModoEditar] = useState(false);
+  // La seleccion vive en un ref (la leen el redibujado y los handlers de arrastre);
+  // forzarRender actualiza la caja en pantalla cuando cambia.
+  const seleccionRef = useRef<SeleccionTrazo | null>(null);
+  const [, forzarRender] = useReducer((x: number) => x + 1, 0);
+  const bloqueosAjenosRef = useRef<Map<string, string>>(new Map());
+  const arrastreRef = useRef<Arrastre | null>(null);
+  const edicionEnVueloRef = useRef(false);
+  const edicionPendienteRef = useRef<Punto[] | null>(null);
+  const ultimaEdicionRef = useRef(0);
 
   // Cursores remotos en tiempo real con nombre
   const [cursoresRemotos, setCursoresRemotos] = useState<
@@ -66,7 +101,6 @@ export function CanvasStudioPage() {
   const trazosLocalesPendientesRef = useRef<Map<string, TrazoLocalPendiente>>(new Map());
   const remotosRef = useRef<Map<string, TrazoRemotoEnProgreso>>(new Map());
   const redibujadoProgramadoRef = useRef(false);
-  const puntosEdicionRef = useRef<Punto[]>([]);
   const ultimoEnvioRef = useRef<number>(0);
 
   // Limpieza automática de cursores remotos inactivos
@@ -99,8 +133,9 @@ export function CanvasStudioPage() {
 
     // 1. Trazos confirmados del servidor
     const ordenados = [...trazosRef.current.values()].sort((a, b) => a.secuencia - b.secuencia);
+    const seleccion = seleccionRef.current;
     for (const t of ordenados) {
-      if (trazoEnEdicion && trazoEnEdicion.id === t.id) continue;
+      if (seleccion && seleccion.trazo.id === t.id) continue;
       dibujarTrazoCompleto(
         ctx,
         { tipoPincel: t.tipoPincel, colorHex: t.colorHex, grosor: t.grosor, opacidad: t.opacidad },
@@ -128,17 +163,18 @@ export function CanvasStudioPage() {
       dibujarTrazoCompleto(ctx, propio.estilo, propio.puntos, ancho, alto);
     }
 
-    // 5. Trazo en edición en vivo
-    if (trazoEnEdicion && puntosEdicionRef.current.length > 0) {
+    // 5. Trazo seleccionado, con su estilo original y la geometria que se le esta aplicando
+    if (seleccion) {
+      const t = seleccion.trazo;
       dibujarTrazoCompleto(
         ctx,
-        { tipoPincel: herramienta.tipoPincel, colorHex: '#FFC24B', grosor: herramienta.grosor, opacidad: 0.9 },
-        puntosEdicionRef.current,
+        { tipoPincel: t.tipoPincel, colorHex: t.colorHex, grosor: t.grosor, opacidad: t.opacidad },
+        seleccion.puntos,
         ancho,
         alto,
       );
     }
-  }, [trazoEnEdicion, herramienta]);
+  }, []);
 
   const solicitarRedibujado = useCallback(() => {
     if (redibujadoProgramadoRef.current) return;
@@ -181,6 +217,9 @@ export function CanvasStudioPage() {
   useEffect(() => {
     if (!comunidadId || !sesion) return;
     let activo = true;
+    // No se puede deducir del contenido: un lienzo vacio tambien tiene 0 trazos
+    // despues de cargar el snapshot, y sus eventos quedarian en el buffer para siempre.
+    let snapshotCargado = false;
     const bufferMensajes: TrazoEvento[] = [];
 
     api
@@ -192,7 +231,7 @@ export function CanvasStudioPage() {
 
     const desuscribirTrazos = stompService.suscribir<TrazoEvento>(`/topic/lienzo/${comunidadId}`, (evento) => {
       if (!activo) return;
-      if (maxSecuenciaRef.current === 0 && trazosRef.current.size === 0) {
+      if (!snapshotCargado) {
         // Todavía no llegó el snapshot inicial: almacenar para procesar en orden
         bufferMensajes.push(evento);
         return;
@@ -203,9 +242,14 @@ export function CanvasStudioPage() {
     const desuscribirBloqueos = stompService.suscribir<BloqueoEvento>(`/topic/lienzo/${comunidadId}/bloqueos`, (evento) => {
       if (!activo) return;
       if (evento.tipo === 'TOMADO') {
+        if (evento.propietarioNombre === sesion?.nombreArtista) return;
+        bloqueosAjenosRef.current.set(evento.trazoId, evento.propietarioNombre ?? 'Alguien');
         setAviso(`${evento.propietarioNombre} está editando un trazo`);
         setTimeout(() => setAviso(null), 3000);
+      } else {
+        bloqueosAjenosRef.current.delete(evento.trazoId);
       }
+      forzarRender();
     });
 
     api
@@ -217,12 +261,18 @@ export function CanvasStudioPage() {
           maxSecuenciaRef.current = Math.max(maxSecuenciaRef.current, t.secuencia);
         }
         redibujarTodo();
+        snapshotCargado = true;
         for (const evento of bufferMensajes) {
           if (evento.tipo === 'FINAL' && evento.secuencia && evento.secuencia <= maxSecuenciaRef.current) {
             continue;
           }
           procesarEvento(evento);
         }
+        bufferMensajes.length = 0;
+      })
+      .catch(() => {
+        // Sin snapshot no hay orden que proteger: procesar en vivo de todos modos
+        snapshotCargado = true;
       })
       .finally(() => activo && setCargando(false));
 
@@ -235,7 +285,7 @@ export function CanvasStudioPage() {
       if (evento.tipo === 'FINAL') {
         if (evento.secuencia != null) {
           const dto: TrazoDto = {
-            id: evento.trazoEnProgresoId ?? generarUUID(),
+            id: evento.trazoId ?? evento.trazoEnProgresoId ?? generarUUID(),
             secuencia: evento.secuencia,
             autorId: evento.autorId,
             autorNombre: evento.autorNombre,
@@ -267,8 +317,9 @@ export function CanvasStudioPage() {
 
       if (evento.tipo === 'EDITADO') {
         if (evento.secuencia != null) {
+          const anterior = trazosRef.current.get(evento.secuencia);
           trazosRef.current.set(evento.secuencia, {
-            id: evento.trazoEnProgresoId ?? generarUUID(),
+            id: evento.trazoId ?? anterior?.id ?? generarUUID(),
             secuencia: evento.secuencia,
             autorId: evento.autorId,
             autorNombre: evento.autorNombre,
@@ -278,10 +329,11 @@ export function CanvasStudioPage() {
             opacidad: evento.opacidad,
             capa: evento.capa,
             puntos: evento.puntos,
-            creadoEn: new Date().toISOString(),
+            creadoEn: anterior?.creadoEn ?? new Date().toISOString(),
           });
         }
         solicitarRedibujado();
+        forzarRender(); // la caja de bloqueo ajena sigue al trazo si lo escalan
         return;
       }
 
@@ -346,30 +398,195 @@ export function CanvasStudioPage() {
     };
   }
 
-  function iniciarEdicionTrazo(punto: Punto) {
+  function coordenadasDesdeCliente(clientX: number, clientY: number): Punto {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
+    return {
+      x: Math.min(1, Math.max(0, (clientX - rect.left) / (rect.width || 1))),
+      y: Math.min(1, Math.max(0, (clientY - rect.top) / (rect.height || 1))),
+    };
+  }
+
+  function trazoBajoElPuntero(punto: Punto): TrazoDto | null {
+    const { ancho, alto } = dimRef.current;
+    let mejor: TrazoDto | null = null;
+    let mejorDistancia = Infinity;
+    for (const trazo of trazosRef.current.values()) {
+      // Tolerancia: unos px alrededor del borde visible del trazo
+      const tolerancia = 10 + (trazo.grosor / 100) * Math.min(ancho, alto) * 0.4;
+      const d = distanciaAlTrazoPx(trazo.puntos, punto, ancho, alto);
+      if (d <= tolerancia && d < mejorDistancia) {
+        mejorDistancia = d;
+        mejor = trazo;
+      }
+    }
+    return mejor;
+  }
+
+  async function seleccionarEn(punto: Punto) {
     if (!comunidadId) return;
-    const trazo = encontrarTrazoCercano(punto);
+    const trazo = trazoBajoElPuntero(punto);
+    const actual = seleccionRef.current;
+    if (actual && trazo?.id === actual.trazo.id) return;
+    await liberarSeleccion();
     if (!trazo) return;
+
+    const duenoAjeno = bloqueosAjenosRef.current.get(trazo.id);
+    if (duenoAjeno) {
+      setAviso(`🔒 ${duenoAjeno} está editando ese trazo. Espera a que lo suelte.`);
+      return;
+    }
+    try {
+      await api.post<BloqueoTrazoResponse>(`/api/comunidades/${comunidadId}/lienzo/trazos/${trazo.id}/bloqueo`);
+      seleccionRef.current = { trazo, puntos: trazo.puntos };
+      setAviso(null);
+      forzarRender();
+      solicitarRedibujado();
+    } catch (err) {
+      const dueno = (err as { response?: { data?: BloqueoTrazoResponse } }).response?.data?.propietarioNombre;
+      if (dueno) {
+        bloqueosAjenosRef.current.set(trazo.id, dueno);
+        forzarRender();
+        setAviso(`🔒 ${dueno} está editando ese trazo. Espera a que lo suelte.`);
+      } else {
+        setAviso(extraerMensajeError(err, 'No se pudo seleccionar el trazo'));
+      }
+    }
+  }
+
+  /** Suelta el bloqueo del trazo seleccionado (si hay) para que otros puedan tomarlo. */
+  async function liberarSeleccion() {
+    const seleccion = seleccionRef.current;
+    if (!seleccion || !comunidadId) return;
+    seleccionRef.current = null;
+    arrastreRef.current = null;
+    // Optimista: el evento EDITADO de la ultima edicion puede llegar un instante despues
+    const confirmado = trazosRef.current.get(seleccion.trazo.secuencia);
+    if (confirmado) trazosRef.current.set(confirmado.secuencia, { ...confirmado, puntos: seleccion.puntos });
+    forzarRender();
+    solicitarRedibujado();
+    await api.delete(`/api/comunidades/${comunidadId}/lienzo/trazos/${seleccion.trazo.id}/bloqueo`).catch(() => {});
+  }
+
+  function perderSeleccion(mensaje: string) {
+    const seleccion = seleccionRef.current;
+    seleccionRef.current = null;
+    arrastreRef.current = null;
+    if (seleccion) {
+      // Se vuelve a la ultima version confirmada por el servidor
+      const confirmado = trazosRef.current.get(seleccion.trazo.secuencia);
+      if (!confirmado) trazosRef.current.set(seleccion.trazo.secuencia, seleccion.trazo);
+    }
+    setAviso(mensaje);
+    forzarRender();
+    solicitarRedibujado();
+  }
+
+  /** Envia la geometria nueva; durante el arrastre como mucho una peticion en vuelo a la vez. */
+  function enviarEdicion(puntos: Punto[], forzar = false) {
+    const seleccion = seleccionRef.current;
+    if (!seleccion || !comunidadId) return;
+    const ahora = performance.now();
+    if (edicionEnVueloRef.current || (!forzar && ahora - ultimaEdicionRef.current < INTERVALO_EDICION_EN_VIVO_MS)) {
+      edicionPendienteRef.current = puntos;
+      return;
+    }
+    edicionEnVueloRef.current = true;
+    edicionPendienteRef.current = null;
+    ultimaEdicionRef.current = ahora;
+    const t = seleccion.trazo;
     api
-      .post(`/api/comunidades/${comunidadId}/lienzo/trazos/${trazo.id}/bloqueo`)
-      .then(() => {
-        setTrazoEnEdicion(trazo);
-        puntosEdicionRef.current = [];
-        setAviso(`Trazo de ${trazo.autorNombre} seleccionado para edición. Dibuja para reemplazarlo.`);
+      .put(`/api/comunidades/${comunidadId}/lienzo/trazos/${t.id}`, {
+        tipoPincel: t.tipoPincel,
+        colorHex: t.colorHex,
+        grosor: t.grosor,
+        opacidad: t.opacidad,
+        capa: t.capa,
+        puntos,
       })
-      .catch((err) => setAviso(extraerMensajeError(err)));
+      .catch((err) => perderSeleccion(extraerMensajeError(err, 'Ya no tienes este trazo bloqueado')))
+      .finally(() => {
+        edicionEnVueloRef.current = false;
+        const pendiente = edicionPendienteRef.current;
+        if (pendiente && seleccionRef.current) enviarEdicion(pendiente, !arrastreRef.current);
+      });
+  }
+
+  function iniciarArrastre(nuevo: Arrastre) {
+    arrastreRef.current = nuevo;
+    const { ancho, alto } = dimRef.current;
+
+    function alMoverVentana(ev: PointerEvent) {
+      const arrastre = arrastreRef.current;
+      const seleccion = seleccionRef.current;
+      if (!arrastre || !seleccion) return;
+      const puntero = coordenadasDesdeCliente(ev.clientX, ev.clientY);
+      seleccion.puntos =
+        arrastre.tipo === 'escala'
+          ? escalar(
+              arrastre.puntosIniciales,
+              arrastre.ancla,
+              factorDeEscala(arrastre.ancla, arrastre.esquinaOriginal, puntero, ancho, alto),
+              ancho,
+              alto,
+            )
+          : mover(arrastre.puntosIniciales, puntero.x - arrastre.inicio.x, puntero.y - arrastre.inicio.y);
+      forzarRender();
+      solicitarRedibujado();
+      enviarEdicion(seleccion.puntos);
+    }
+
+    function alSoltarVentana() {
+      window.removeEventListener('pointermove', alMoverVentana);
+      window.removeEventListener('pointerup', alSoltarVentana);
+      arrastreRef.current = null;
+      const seleccion = seleccionRef.current;
+      if (seleccion) enviarEdicion(seleccion.puntos, true);
+    }
+
+    window.addEventListener('pointermove', alMoverVentana);
+    window.addEventListener('pointerup', alSoltarVentana);
+  }
+
+  function alIniciarEscala(esquina: Esquina, e: React.PointerEvent<HTMLElement>) {
+    e.preventDefault();
+    const seleccion = seleccionRef.current;
+    if (!seleccion) return;
+    const caja = cajaDe(seleccion.puntos);
+    iniciarArrastre({
+      tipo: 'escala',
+      ancla: anclaOpuesta(caja, esquina),
+      esquinaOriginal: esquinaDe(caja, esquina),
+      puntosIniciales: seleccion.puntos,
+    });
+  }
+
+  function alIniciarMover(e: React.PointerEvent<HTMLElement>) {
+    e.preventDefault();
+    const seleccion = seleccionRef.current;
+    if (!seleccion) return;
+    iniciarArrastre({
+      tipo: 'mover',
+      inicio: coordenadasDesdeCliente(e.clientX, e.clientY),
+      puntosIniciales: seleccion.puntos,
+    });
+  }
+
+  async function salirDelModoEditar() {
+    await liberarSeleccion();
+    setModoEditar(false);
   }
 
   function alDobleClic(e: React.MouseEvent<HTMLCanvasElement>) {
     e.preventDefault();
-    const punto = coordenadasRelativas(e as unknown as React.PointerEvent<HTMLCanvasElement>);
-    iniciarEdicionTrazo(punto);
+    setModoEditar(true);
+    void seleccionarEn(coordenadasDesdeCliente(e.clientX, e.clientY));
   }
 
   function alClicDerecho(e: React.MouseEvent<HTMLCanvasElement>) {
     e.preventDefault();
-    const punto = coordenadasRelativas(e as unknown as React.PointerEvent<HTMLCanvasElement>);
-    iniciarEdicionTrazo(punto);
+    setModoEditar(true);
+    void seleccionarEn(coordenadasDesdeCliente(e.clientX, e.clientY));
   }
 
   function alPresionar(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -378,9 +595,10 @@ export function CanvasStudioPage() {
     const { ancho, alto } = dimRef.current;
     const ctx = ctxRef.current;
 
-    // Si mantiene Alt presionado, selecciona el trazo directamente
-    if (e.altKey) {
-      iniciarEdicionTrazo(punto);
+    // En modo edición (o con Alt presionado) el clic selecciona un trazo en vez de dibujar
+    if (modoEditar || e.altKey) {
+      if (!modoEditar) setModoEditar(true);
+      void seleccionarEn(punto);
       return;
     }
 
@@ -407,23 +625,6 @@ export function CanvasStudioPage() {
     if (!ctx) return;
     const punto = coordenadasRelativas(e);
     const { ancho, alto } = dimRef.current;
-
-    if (trazoEnEdicion) {
-      if (e.buttons !== 1) return;
-      const anterior = puntosEdicionRef.current[puntosEdicionRef.current.length - 1];
-      if (anterior) {
-        dibujarSegmento(
-          ctx,
-          { tipoPincel: herramienta.tipoPincel, colorHex: '#FFC24B', grosor: herramienta.grosor, opacidad: 0.9 },
-          anterior,
-          punto,
-          ancho,
-          alto,
-        );
-      }
-      puntosEdicionRef.current.push(punto);
-      return;
-    }
 
     const actual = propioTrazoRef.current;
     if (!actual || e.buttons !== 1) return;
@@ -493,45 +694,37 @@ export function CanvasStudioPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [comunidadId, herramienta]);
 
-  function encontrarTrazoCercano(punto: Punto): TrazoDto | null {
-    let mejor: TrazoDto | null = null;
-    let mejorDistancia = 0.03;
-    for (const trazo of trazosRef.current.values()) {
-      for (const p of trazo.puntos) {
-        const d = Math.hypot(p.x - punto.x, p.y - punto.y);
-        if (d < mejorDistancia) {
-          mejorDistancia = d;
-          mejor = trazo;
-        }
+  // Heartbeat del bloqueo mientras haya un trazo seleccionado; Esc suelta la selección
+  useEffect(() => {
+    if (!modoEditar || !comunidadId) return;
+    const intervalo = setInterval(() => {
+      const seleccion = seleccionRef.current;
+      if (!seleccion) return;
+      api
+        .put(`/api/comunidades/${comunidadId}/lienzo/trazos/${seleccion.trazo.id}/bloqueo`)
+        .catch(() => perderSeleccion('El bloqueo del trazo venció; vuelve a seleccionarlo para seguir editando.'));
+    }, HEARTBEAT_BLOQUEO_MS);
+    function alTeclear(e: KeyboardEvent) {
+      if (e.key === 'Escape') void liberarSeleccion();
+    }
+    window.addEventListener('keydown', alTeclear);
+    return () => {
+      clearInterval(intervalo);
+      window.removeEventListener('keydown', alTeclear);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modoEditar, comunidadId]);
+
+  // Al salir de la página no dejar el trazo bloqueado hasta que venza el TTL
+  useEffect(
+    () => () => {
+      const seleccion = seleccionRef.current;
+      if (seleccion && comunidadId) {
+        api.delete(`/api/comunidades/${comunidadId}/lienzo/trazos/${seleccion.trazo.id}/bloqueo`).catch(() => {});
       }
-    }
-    return mejor;
-  }
-
-  async function confirmarEdicion() {
-    if (!trazoEnEdicion || !comunidadId) return;
-    try {
-      await api.put(`/api/comunidades/${comunidadId}/lienzo/trazos/${trazoEnEdicion.id}`, {
-        tipoPincel: herramienta.tipoPincel,
-        colorHex: herramienta.colorHex,
-        grosor: herramienta.grosor,
-        opacidad: herramienta.opacidad,
-        puntos: puntosEdicionRef.current.length > 1 ? puntosEdicionRef.current : trazoEnEdicion.puntos,
-      });
-    } catch (err) {
-      setAviso(extraerMensajeError(err));
-    } finally {
-      await api.delete(`/api/comunidades/${comunidadId}/lienzo/trazos/${trazoEnEdicion.id}/bloqueo`).catch(() => {});
-      setTrazoEnEdicion(null);
-    }
-  }
-
-  async function cancelarEdicion() {
-    if (!trazoEnEdicion || !comunidadId) return;
-    await api.delete(`/api/comunidades/${comunidadId}/lienzo/trazos/${trazoEnEdicion.id}/bloqueo`).catch(() => {});
-    setTrazoEnEdicion(null);
-    redibujarTodo();
-  }
+    },
+    [comunidadId],
+  );
 
   // Publicar obra directamente desde el lienzo
   function abrirPublicar() {
@@ -596,12 +789,25 @@ export function CanvasStudioPage() {
               </span>
             </div>
             <p className="text-[11px] text-paper-dim hidden sm:block">
-              Lienzo responsivo de pantalla completa · Haz doble clic o clic derecho sobre cualquier trazo para editarlo
+              Lienzo responsivo de pantalla completa · Usa «Editar trazos» (o doble clic sobre un trazo) para agrandarlo, achicarlo o moverlo
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-pressed={modoEditar}
+            onClick={() => (modoEditar ? void salirDelModoEditar() : setModoEditar(true))}
+            className={
+              modoEditar
+                ? 'btn-primary text-xs px-3 py-1.5 font-semibold bg-violet hover:brightness-110'
+                : 'btn-ghost text-xs px-2.5 py-1.5 border border-ink-800 text-paper-muted hover:text-paper'
+            }
+            title="Seleccionar un trazo para agrandarlo, achicarlo o moverlo"
+          >
+            ✏️ {modoEditar ? 'Editando trazos' : 'Editar trazos'}
+          </button>
           <button
             type="button"
             onClick={descargarSnapshot}
@@ -632,14 +838,34 @@ export function CanvasStudioPage() {
         </div>
       )}
 
-      {/* Barra de herramientas horizontal estilo Paint siempre presente */}
-      <BrushToolbar
-        herramienta={herramienta}
-        onCambiar={setHerramienta}
-        deshabilitado={!!trazoEnEdicion}
-        orientacion="horizontal"
-        onPublicar={abrirPublicar}
-      />
+      {/* En modo edición los pinceles no aplican: su lugar lo toma la barra de edición, fuera del lienzo */}
+      {modoEditar ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet/50 bg-ink-900 px-4 py-2.5">
+          <p className="text-xs text-paper font-medium">
+            ✏️{' '}
+            {seleccionRef.current
+              ? 'Arrastra las esquinas para agrandar o achicar el trazo, o la caja para moverlo. Nadie más puede tocarlo mientras lo tengas.'
+              : 'Haz clic sobre un trazo para seleccionarlo.'}
+          </p>
+          <div className="flex gap-2">
+            {seleccionRef.current && (
+              <button type="button" className="btn-secondary text-xs px-2.5 py-1" onClick={() => void liberarSeleccion()}>
+                Soltar trazo
+              </button>
+            )}
+            <button type="button" className="btn-primary text-xs px-3 py-1 font-semibold" onClick={() => void salirDelModoEditar()}>
+              Listo
+            </button>
+          </div>
+        </div>
+      ) : (
+        <BrushToolbar
+          herramienta={herramienta}
+          onCambiar={setHerramienta}
+          orientacion="horizontal"
+          onPublicar={abrirPublicar}
+        />
+      )}
 
       {/* Contenedor del lienzo que ocupa toda la forma de la pantalla restante */}
       <div
@@ -658,7 +884,7 @@ export function CanvasStudioPage() {
         <canvas
           ref={canvasRef}
           className="absolute inset-0 h-full w-full touch-none select-none"
-          style={{ cursor: 'crosshair' }}
+          style={{ cursor: modoEditar ? 'pointer' : 'crosshair' }}
           onPointerDown={alPresionar}
           onPointerMove={alMover}
           onPointerUp={alSoltar}
@@ -710,20 +936,33 @@ export function CanvasStudioPage() {
           ))}
         </div>
 
-        {/* Panel flotante de edición de trazo bloqueado */}
-        {trazoEnEdicion && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 rounded-xl border border-amber/50 bg-ink-900/90 px-4 py-2.5 shadow-2xl backdrop-blur-md">
-            <p className="text-xs text-amber font-medium">🎯 Editando trazo de {trazoEnEdicion.autorNombre} — dibuja encima para reemplazarlo</p>
-            <div className="flex gap-2">
-              <button type="button" className="btn-secondary text-xs px-2.5 py-1" onClick={cancelarEdicion}>
-                Cancelar
-              </button>
-              <button type="button" className="btn-primary text-xs px-3 py-1 font-semibold" onClick={confirmarEdicion}>
-                Confirmar
-              </button>
-            </div>
-          </div>
+        {/* Trazos que otros artistas tienen bloqueados: se ven, pero no se pueden tomar */}
+        {[...bloqueosAjenosRef.current.entries()].map(([trazoId, nombre]) => {
+          const trazo = [...trazosRef.current.values()].find((t) => t.id === trazoId);
+          if (!trazo || trazo.puntos.length === 0) return null;
+          return (
+            <CajaSeleccion
+              key={trazoId}
+              caja={cajaDe(trazo.puntos)}
+              editable={false}
+              etiqueta={`🔒 ${nombre} está editando`}
+              anchoLineaPx={anchoDeLineaPx(trazo, Math.min(dimRef.current.ancho, dimRef.current.alto))}
+            />
+          );
+        })}
+
+        {/* Caja del trazo que yo tengo bloqueado: esquinas para escalar, cuerpo para mover */}
+        {seleccionRef.current && (
+          <CajaSeleccion
+            caja={cajaDe(seleccionRef.current.puntos)}
+            editable
+            etiqueta={`Trazo de ${seleccionRef.current.trazo.autorNombre}`}
+            anchoLineaPx={anchoDeLineaPx(seleccionRef.current.trazo, Math.min(dimRef.current.ancho, dimRef.current.alto))}
+            onIniciarEscala={alIniciarEscala}
+            onIniciarMover={alIniciarMover}
+          />
         )}
+
       </div>
 
       {/* Modal para publicar obra directamente desde el lienzo */}

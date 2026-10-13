@@ -45,6 +45,8 @@ export interface TrazoEvento {
   opacidad: number;
   capa: number;
   puntos: Punto[];
+  /** Id persistido del trazo (FINAL/EDITADO); trazoEnProgresoId es solo el temporal del cliente. */
+  trazoId?: string | null;
 }
 
 export interface TrazoDto {
@@ -59,6 +61,11 @@ export interface TrazoDto {
   capa: number;
   puntos: Punto[];
   creadoEn: string;
+}
+
+export interface BloqueoTrazoResponse {
+  tomado: boolean;
+  propietarioNombre: string | null;
 }
 
 export interface BloqueoEvento {

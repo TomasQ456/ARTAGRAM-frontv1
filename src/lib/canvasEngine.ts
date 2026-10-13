@@ -15,34 +15,49 @@ export interface EstiloPincel {
  * de abajo (multiply) y se ve mas suave. Un pincel desconocido (version
  * vieja del catalogo) cae al basico en vez de fallar (nota tecnica de HU-13).
  */
+/** Ancho real (px) con el que se pinta la linea de cada pincel; tambien lo usa la caja de seleccion. */
+export function anchoDeLineaPx(estilo: EstiloPincel, escalaPx: number): number {
+  const grosorPx = (estilo.grosor / 100) * escalaPx * 0.6;
+  switch (estilo.tipoPincel) {
+    case 'ACUARELA':
+      return Math.max(2, grosorPx * 1.5);
+    case 'MARCADOR':
+      return Math.max(2, grosorPx * 1.2);
+    case 'PLUMA':
+      return Math.max(1, grosorPx * 0.35);
+    case 'AEROGRAFO':
+      return Math.max(3, grosorPx * 1.8);
+    case 'LAPIZ':
+    default:
+      return Math.max(1.2, grosorPx * 0.5);
+  }
+}
+
 function aplicarEstilo(ctx: CanvasRenderingContext2D, estilo: EstiloPincel, escalaPx: number) {
   const grosorPx = (estilo.grosor / 100) * escalaPx * 0.6;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
+  ctx.lineWidth = anchoDeLineaPx(estilo, escalaPx);
 
   switch (estilo.tipoPincel) {
     case 'ACUARELA':
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = Math.min(0.75, estilo.opacidad * 0.7);
-      ctx.lineWidth = Math.max(2, grosorPx * 1.5);
       ctx.strokeStyle = estilo.colorHex;
       break;
     case 'MARCADOR':
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = Math.min(0.9, estilo.opacidad);
-      ctx.lineWidth = Math.max(2, grosorPx * 1.2);
       ctx.strokeStyle = estilo.colorHex;
       break;
     case 'PLUMA':
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = estilo.opacidad;
-      ctx.lineWidth = Math.max(1, grosorPx * 0.35);
       ctx.strokeStyle = estilo.colorHex;
       break;
     case 'AEROGRAFO':
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = Math.min(0.55, estilo.opacidad * 0.45);
-      ctx.lineWidth = Math.max(3, grosorPx * 1.8);
       ctx.strokeStyle = estilo.colorHex;
       ctx.shadowColor = estilo.colorHex;
       ctx.shadowBlur = Math.max(4, grosorPx * 0.8);
@@ -51,7 +66,6 @@ function aplicarEstilo(ctx: CanvasRenderingContext2D, estilo: EstiloPincel, esca
     default:
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = estilo.opacidad;
-      ctx.lineWidth = Math.max(1.2, grosorPx * 0.5);
       ctx.strokeStyle = estilo.colorHex;
       break;
   }
