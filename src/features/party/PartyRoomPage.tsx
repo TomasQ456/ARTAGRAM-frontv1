@@ -30,7 +30,6 @@ export function PartyRoomPage() {
   const [estado, setEstado] = useState<EstadoRondaResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(true);
-  const [msRestantesVista, setMsRestantesVista] = useState(0);
   const [aviso, setAviso] = useState<string | null>(null);
 
   // Exclusión mutua de herramientas: solo 1 persona por herramienta a la vez
@@ -116,7 +115,6 @@ export function PartyRoomPage() {
       setEstado(data);
       enRondaRef.current = data.estadoSala === 'EN_RONDA';
       relojRef.current = { recibidoEn: performance.now(), msRestantes: data.msRestantes };
-      setMsRestantesVista(data.msRestantes);
       for (const t of data.trazos) {
         trazosRef.current.set(t.secuencia, t);
         maxSecuenciaRef.current = Math.max(maxSecuenciaRef.current, t.secuencia);
@@ -158,7 +156,6 @@ export function PartyRoomPage() {
 
       if (evento.tipo === 'TICK') {
         relojRef.current = { recibidoEn: performance.now(), msRestantes: evento.msRestantes ?? 0 };
-        setMsRestantesVista(evento.msRestantes ?? 0);
         if (!enRondaRef.current) {
           enRondaRef.current = true;
           cargarEstado();
@@ -250,16 +247,6 @@ export function PartyRoomPage() {
 
     return desuscribir;
   }, [salaId, sesion, cargarEstado, redibujarTodo]);
-
-  // Suaviza la cuenta regresiva entre ticks del servidor
-  useEffect(() => {
-    const intervalo = setInterval(() => {
-      const { recibidoEn, msRestantes } = relojRef.current;
-      const transcurrido = performance.now() - recibidoEn;
-      setMsRestantesVista(Math.max(0, msRestantes - transcurrido));
-    }, 100);
-    return () => clearInterval(intervalo);
-  }, []);
 
   function coordenadas(e: React.PointerEvent<HTMLCanvasElement>): Punto {
     const canvas = canvasRef.current;
@@ -458,10 +445,6 @@ export function PartyRoomPage() {
     enlace.click();
   }
 
-  const segundos = Math.ceil(msRestantesVista / 1000);
-  const mm = String(Math.floor(segundos / 60)).padStart(2, '0');
-  const ss = String(segundos % 60).padStart(2, '0');
-
   if (error) {
     return (
       <div className="mx-auto max-w-lg px-4 py-24 text-center">
@@ -502,15 +485,8 @@ export function PartyRoomPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Cronómetro de ronda o estado libre */}
-          <div
-            className={`rounded-xl border px-3 py-1 font-display text-sm font-semibold tabular-nums ${
-              enRonda ? 'border-teal/50 bg-teal/15 text-teal' : 'border-ink-700 bg-ink-900/60 text-paper-dim'
-            }`}
-            title={enRonda ? 'Tiempo restante de la ronda' : 'Modo libre'}
-          >
-            {enRonda ? `⏱ ${mm}:${ss}` : '🎨 Dibujo libre'}
-          </div>
+          {/* Cronómetro aislado que no re-renderiza el lienzo ni la página */}
+          <CronometroRonda relojRef={relojRef} enRonda={enRonda} />
 
           {esAnfitrion && (
             <button
@@ -624,6 +600,46 @@ export function PartyRoomPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function CronometroRonda({
+  relojRef,
+  enRonda,
+}: {
+  relojRef: React.RefObject<{ recibidoEn: number; msRestantes: number }>;
+  enRonda: boolean;
+}) {
+  const [ms, setMs] = useState(0);
+
+  useEffect(() => {
+    if (!enRonda) return;
+    const actualizar = () => {
+      const { recibidoEn, msRestantes } = relojRef.current;
+      const transcurrido = performance.now() - recibidoEn;
+      setMs(Math.max(0, msRestantes - transcurrido));
+    };
+    actualizar();
+    const intervalo = setInterval(actualizar, 200);
+    return () => clearInterval(intervalo);
+  }, [enRonda, relojRef]);
+
+  if (!enRonda) {
+    return (
+      <div className="rounded-xl border border-ink-700 bg-ink-900/60 px-3 py-1 font-display text-sm font-semibold text-paper-dim">
+        🎨 Dibujo libre
+      </div>
+    );
+  }
+
+  const segundos = Math.ceil(ms / 1000);
+  const mm = String(Math.floor(segundos / 60)).padStart(2, '0');
+  const ss = String(segundos % 60).padStart(2, '0');
+
+  return (
+    <div className="rounded-xl border border-teal/50 bg-teal/15 px-3 py-1 font-display text-sm font-semibold tabular-nums text-teal">
+      ⏱ {mm}:{ss}
     </div>
   );
 }
