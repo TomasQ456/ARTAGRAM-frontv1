@@ -234,6 +234,18 @@ export interface LikeResponse {
   contadorLikes: number;
 }
 
+export interface ArtistaResumen {
+  usuarioId: string;
+  nombreArtista: string;
+  loSigo: boolean;
+  seguidores: number;
+}
+
+export interface Seguimiento {
+  loSigo: boolean;
+  seguidores: number;
+}
+
 export interface FeedResponse {
   publicaciones: PublicacionDto[];
   cursorFechaSiguiente: string | null;

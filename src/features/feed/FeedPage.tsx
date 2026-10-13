@@ -1,16 +1,15 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
-import { Link } from 'react-router-dom';
 import { api, extraerMensajeError } from '../../lib/api';
 import { Button } from '../../components/ui/Button';
 import { FondoEstudio } from '../../components/layout/FondoEstudio';
 import { PostCard } from './PostCard';
 import { PublishWizard } from './PublishWizard';
+import { BuscarArtistas } from './BuscarArtistas';
 import type { FeedResponse, PublicacionDto } from '../../types';
 
 export function FeedPage() {
   const [publicaciones, setPublicaciones] = useState<PublicacionDto[]>([]);
-  const [sugeridos, setSugeridos] = useState<string[]>([]);
   const [cursor, setCursor] = useState<{ fecha: string; id: string } | null>(null);
   const [hayMas, setHayMas] = useState(false);
   const [cargando, setCargando] = useState(true);
@@ -24,7 +23,6 @@ export function FeedPage() {
         params: desdeInicio || !cursor ? {} : { cursorFecha: cursor.fecha, cursorId: cursor.id },
       });
       setPublicaciones((prev) => (desdeInicio ? data.publicaciones : [...prev, ...data.publicaciones]));
-      setSugeridos(data.artistasSugeridos);
       setHayMas(data.hayMas);
       setCursor(data.cursorFechaSiguiente && data.cursorIdSiguiente ? { fecha: data.cursorFechaSiguiente, id: data.cursorIdSiguiente } : null);
     } catch (err) {
@@ -54,16 +52,11 @@ export function FeedPage() {
         {!mostrarPublicar && <Button onClick={() => setMostrarPublicar(true)}>Publicar</Button>}
       </div>
 
-      {sugeridos.length > 0 && (
-        <div className="mb-6 flex flex-wrap items-center gap-2 rounded-xl border border-ink-700 bg-ink-900/40 px-4 py-3">
-          <span className="text-xs text-paper-dim">Artistas para descubrir:</span>
-          {sugeridos.map((n) => (
-            <Link key={n} to={`/perfil/${n}`} className="chip text-xs hover:border-coral/40 hover:text-coral">
-              {n}
-            </Link>
-          ))}
-        </div>
-      )}
+      {/* Buscar personas y seguirlas: el feed muestra tus obras y las de quienes sigues */}
+      <BuscarArtistas
+        mostrarSugerencias={!cargando && publicaciones.length === 0}
+        onSeguimientoCambiado={() => void cargar(true)}
+      />
 
       <AnimatePresence>
         {mostrarPublicar && (
@@ -87,7 +80,7 @@ export function FeedPage() {
         <div className="card flex flex-col items-center gap-3 p-12 text-center">
           <div className="text-4xl">🖌️</div>
           <h3 className="font-display text-lg font-semibold">Todavía no hay nada en tu feed</h3>
-          <p className="max-w-sm text-sm text-paper-muted">Publica tu primera obra o sigue a otros artistas para ver lo que hacen.</p>
+          <p className="max-w-sm text-sm text-paper-muted">Publica tu primera obra o busca artistas arriba y síguelos para ver lo que hacen.</p>
         </div>
       ) : (
         <div className="flex flex-col gap-6">
