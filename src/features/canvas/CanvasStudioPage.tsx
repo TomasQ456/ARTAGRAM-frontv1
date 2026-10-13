@@ -11,7 +11,23 @@ import type { BloqueoEvento, ComunidadResponse, Punto, TrazoDto, TrazoEvento } f
 
 interface TrazoRemotoEnProgreso {
   estilo: EstiloPincel;
+  puntos: Punto[];
   ultimoPunto: Punto | null;
+}
+
+interface TrazoLocalPendiente {
+  id: string;
+  estilo: EstiloPincel;
+  puntos: Punto[];
+  capa: number;
+  creadoEn: number;
+}
+
+interface TrazoPropioActivo {
+  id: string;
+  estilo: EstiloPincel;
+  puntos: Punto[];
+  pendientes: Punto[];
 }
 
 export function CanvasStudioPage() {
@@ -46,8 +62,10 @@ export function CanvasStudioPage() {
 
   const trazosRef = useRef<Map<number, TrazoDto>>(new Map());
   const maxSecuenciaRef = useRef(0);
-  const propioTrazoRef = useRef<{ id: string; puntos: Punto[]; pendientes: Punto[] } | null>(null);
+  const propioTrazoRef = useRef<TrazoPropioActivo | null>(null);
+  const trazosLocalesPendientesRef = useRef<Map<string, TrazoLocalPendiente>>(new Map());
   const remotosRef = useRef<Map<string, TrazoRemotoEnProgreso>>(new Map());
+  const redibujadoProgramadoRef = useRef(false);
   const puntosEdicionRef = useRef<Punto[]>([]);
   const ultimoEnvioRef = useRef<number>(0);
 
@@ -78,8 +96,11 @@ export function CanvasStudioPage() {
     ctx.clearRect(0, 0, ancho, alto);
     ctx.fillStyle = '#F5F1EA';
     ctx.fillRect(0, 0, ancho, alto);
+
+    // 1. Trazos confirmados del servidor
     const ordenados = [...trazosRef.current.values()].sort((a, b) => a.secuencia - b.secuencia);
     for (const t of ordenados) {
+      if (trazoEnEdicion && trazoEnEdicion.id === t.id) continue;
       dibujarTrazoCompleto(
         ctx,
         { tipoPincel: t.tipoPincel, colorHex: t.colorHex, grosor: t.grosor, opacidad: t.opacidad },
@@ -88,7 +109,45 @@ export function CanvasStudioPage() {
         alto,
       );
     }
-  }, []);
+
+    // 2. Trazos locales pendientes de confirmación del servidor (in-flight optimistas)
+    for (const p of trazosLocalesPendientesRef.current.values()) {
+      dibujarTrazoCompleto(ctx, p.estilo, p.puntos, ancho, alto);
+    }
+
+    // 3. Trazos remotos en progreso de otros usuarios
+    for (const r of remotosRef.current.values()) {
+      if (r.puntos.length > 0) {
+        dibujarTrazoCompleto(ctx, r.estilo, r.puntos, ancho, alto);
+      }
+    }
+
+    // 4. Trazo propio actualmente en trazado (mientras arrastra el puntero)
+    const propio = propioTrazoRef.current;
+    if (propio && propio.puntos.length > 0) {
+      dibujarTrazoCompleto(ctx, propio.estilo, propio.puntos, ancho, alto);
+    }
+
+    // 5. Trazo en edición en vivo
+    if (trazoEnEdicion && puntosEdicionRef.current.length > 0) {
+      dibujarTrazoCompleto(
+        ctx,
+        { tipoPincel: herramienta.tipoPincel, colorHex: '#FFC24B', grosor: herramienta.grosor, opacidad: 0.9 },
+        puntosEdicionRef.current,
+        ancho,
+        alto,
+      );
+    }
+  }, [trazoEnEdicion, herramienta]);
+
+  const solicitarRedibujado = useCallback(() => {
+    if (redibujadoProgramadoRef.current) return;
+    redibujadoProgramadoRef.current = true;
+    requestAnimationFrame(() => {
+      redibujadoProgramadoRef.current = false;
+      redibujarTodo();
+    });
+  }, [redibujarTodo]);
 
   // Adaptación dinámica del lienzo a la forma y tamaño de la pantalla
   useEffect(() => {
@@ -191,14 +250,18 @@ export function CanvasStudioPage() {
           trazosRef.current.set(dto.secuencia, dto);
           maxSecuenciaRef.current = Math.max(maxSecuenciaRef.current, dto.secuencia);
         }
-        if (evento.trazoEnProgresoId) remotosRef.current.delete(evento.trazoEnProgresoId);
+        if (evento.trazoEnProgresoId) {
+          remotosRef.current.delete(evento.trazoEnProgresoId);
+          trazosLocalesPendientesRef.current.delete(evento.trazoEnProgresoId);
+        }
         setCursoresRemotos((prev) => {
           if (!prev[evento.autorId]) return prev;
           const copia = { ...prev };
           delete copia[evento.autorId];
           return copia;
         });
-        if (!esPropio) redibujarTodo();
+        // Siempre redibujar para asegurar que todos vean exactamente la misma versión y composición
+        solicitarRedibujado();
         return;
       }
 
@@ -218,7 +281,7 @@ export function CanvasStudioPage() {
             creadoEn: new Date().toISOString(),
           });
         }
-        redibujarTodo();
+        solicitarRedibujado();
         return;
       }
 
@@ -246,12 +309,14 @@ export function CanvasStudioPage() {
       if (!estado) {
         estado = {
           estilo: { tipoPincel: evento.tipoPincel, colorHex: evento.colorHex, grosor: evento.grosor, opacidad: evento.opacidad },
+          puntos: [],
           ultimoPunto: null,
         };
         remotosRef.current.set(clave, estado);
       }
 
       for (const punto of evento.puntos) {
+        estado.puntos.push(punto);
         if (estado.ultimoPunto) {
           dibujarSegmento(ctx, estado.estilo, estado.ultimoPunto, punto, ancho, alto);
         } else {
@@ -268,7 +333,7 @@ export function CanvasStudioPage() {
       desuscribirBloqueos();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [comunidadId, sesion?.accessToken, redibujarTodo]);
+  }, [comunidadId, sesion?.accessToken, solicitarRedibujado]);
 
   function coordenadasRelativas(e: React.PointerEvent<HTMLCanvasElement>): Punto {
     const canvas = canvasRef.current;
@@ -320,18 +385,18 @@ export function CanvasStudioPage() {
     }
 
     const id = generarUUID();
-    propioTrazoRef.current = { id, puntos: [punto], pendientes: [punto] };
+    const estilo: EstiloPincel = {
+      tipoPincel: herramienta.tipoPincel,
+      colorHex: herramienta.colorHex,
+      grosor: herramienta.grosor,
+      opacidad: herramienta.opacidad,
+    };
+    propioTrazoRef.current = { id, estilo, puntos: [punto], pendientes: [punto] };
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
 
     // Dibujar el punto inicial localmente
     if (ctx) {
-      dibujarPunto(
-        ctx,
-        { tipoPincel: herramienta.tipoPincel, colorHex: herramienta.colorHex, grosor: herramienta.grosor, opacidad: herramienta.opacidad },
-        punto,
-        ancho,
-        alto,
-      );
+      dibujarPunto(ctx, estilo, punto, ancho, alto);
     }
     // Emitir inmediatamente para que los demás vean el inicio del trazo de inmediato
     enviarParcial(comunidadId, id, [punto]);
@@ -363,14 +428,7 @@ export function CanvasStudioPage() {
     const actual = propioTrazoRef.current;
     if (!actual || e.buttons !== 1) return;
     const anterior = actual.puntos[actual.puntos.length - 1];
-    dibujarSegmento(
-      ctx,
-      { tipoPincel: herramienta.tipoPincel, colorHex: herramienta.colorHex, grosor: herramienta.grosor, opacidad: herramienta.opacidad },
-      anterior,
-      punto,
-      ancho,
-      alto,
-    );
+    dibujarSegmento(ctx, actual.estilo, anterior, punto, ancho, alto);
     actual.puntos.push(punto);
     actual.pendientes.push(punto);
 
@@ -388,12 +446,20 @@ export function CanvasStudioPage() {
       if (actual.pendientes.length > 1) {
         enviarParcial(comunidadId, actual.id, actual.pendientes);
       }
+      // Proteger en pendientes locales para que nunca se borre si ocurre un redibujado concurrente
+      trazosLocalesPendientesRef.current.set(actual.id, {
+        id: actual.id,
+        estilo: actual.estilo,
+        puntos: [...actual.puntos],
+        capa: 0,
+        creadoEn: Date.now(),
+      });
       stompService.publicar(`/app/lienzo/${comunidadId}/final`, {
         trazoEnProgresoId: actual.id,
-        tipoPincel: herramienta.tipoPincel,
-        colorHex: herramienta.colorHex,
-        grosor: herramienta.grosor,
-        opacidad: herramienta.opacidad,
+        tipoPincel: actual.estilo.tipoPincel,
+        colorHex: actual.estilo.colorHex,
+        grosor: actual.estilo.grosor,
+        opacidad: actual.estilo.opacidad,
         capa: 0,
         puntos: actual.puntos,
       });

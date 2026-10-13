@@ -15,7 +15,24 @@ import type { EstadoRondaResponse, PartyEvento, PartyTrazoDto, Punto, SalaFiesta
 interface TrazoRemotoEnProgreso {
   estilo: EstiloPincel;
   esBorrador: boolean;
+  puntos: Punto[];
   ultimoPunto: Punto | null;
+}
+
+interface TrazoLocalPendiente {
+  id: string;
+  estilo: EstiloPincel;
+  esBorrador: boolean;
+  puntos: Punto[];
+  creadoEn: number;
+}
+
+interface TrazoPropioActivo {
+  id: string;
+  estilo: EstiloPincel;
+  esBorrador: boolean;
+  puntos: Punto[];
+  pendientes: Punto[];
 }
 
 export interface CursorRemoto {
@@ -69,8 +86,10 @@ export function PartyRoomPage() {
 
   const trazosRef = useRef<Map<number, PartyTrazoDto>>(new Map());
   const maxSecuenciaRef = useRef(0);
-  const propioTrazoRef = useRef<{ id: string; puntos: Punto[]; pendientes: Punto[] } | null>(null);
+  const propioTrazoRef = useRef<TrazoPropioActivo | null>(null);
+  const trazosLocalesPendientesRef = useRef<TrazoLocalPendiente[]>([]);
   const remotosRef = useRef<Map<string, TrazoRemotoEnProgreso>>(new Map());
+  const redibujadoProgramadoRef = useRef(false);
   const relojRef = useRef<{ recibidoEn: number; msRestantes: number }>({ recibidoEn: 0, msRestantes: 0 });
   const enRondaRef = useRef(false);
   const ultimoEnvioRef = useRef<number>(0);
@@ -90,6 +109,8 @@ export function PartyRoomPage() {
     ctx.clearRect(0, 0, ancho, alto);
     ctx.fillStyle = '#F5F1EA';
     ctx.fillRect(0, 0, ancho, alto);
+
+    // 1. Trazos confirmados por el servidor (orden secuencial estricto)
     const ordenados = [...trazosRef.current.values()].sort((a, b) => a.secuencia - b.secuencia);
     for (const t of ordenados) {
       if (t.borrador) {
@@ -104,7 +125,46 @@ export function PartyRoomPage() {
         );
       }
     }
+
+    // 2. Trazos locales pendientes de confirmación del servidor (in-flight optimistas)
+    for (const p of trazosLocalesPendientesRef.current) {
+      if (p.esBorrador) {
+        dibujarBorrado(ctx, p.puntos, p.estilo.grosor || 40, ancho, alto);
+      } else {
+        dibujarTrazoCompleto(ctx, p.estilo, p.puntos, ancho, alto);
+      }
+    }
+
+    // 3. Trazos remotos en progreso de otros usuarios
+    for (const r of remotosRef.current.values()) {
+      if (r.puntos.length > 0) {
+        if (r.esBorrador) {
+          dibujarBorrado(ctx, r.puntos, r.estilo.grosor || 40, ancho, alto);
+        } else {
+          dibujarTrazoCompleto(ctx, r.estilo, r.puntos, ancho, alto);
+        }
+      }
+    }
+
+    // 4. Trazo propio actualmente en trazado (mientras arrastra el puntero en este instante)
+    const propio = propioTrazoRef.current;
+    if (propio && propio.puntos.length > 0) {
+      if (propio.esBorrador) {
+        dibujarBorrado(ctx, propio.puntos, propio.estilo.grosor || 40, ancho, alto);
+      } else {
+        dibujarTrazoCompleto(ctx, propio.estilo, propio.puntos, ancho, alto);
+      }
+    }
   }, []);
+
+  const solicitarRedibujado = useCallback(() => {
+    if (redibujadoProgramadoRef.current) return;
+    redibujadoProgramadoRef.current = true;
+    requestAnimationFrame(() => {
+      redibujadoProgramadoRef.current = false;
+      redibujarTodo();
+    });
+  }, [redibujarTodo]);
 
   // Adaptación dinámica del lienzo a la pantalla completa restante
   useEffect(() => {
@@ -274,9 +334,25 @@ export function PartyRoomPage() {
           delete copia[evento.trazo!.autorId];
           return copia;
         });
-        if (evento.trazo.autorId !== sesion.usuarioId) {
-          redibujarTodo();
+
+        // Si es trazo propio, reconciliar la lista de pendientes locales (in-flight)
+        if (evento.trazo.autorId === sesion.usuarioId) {
+          const ahora = Date.now();
+          const idx = trazosLocalesPendientesRef.current.findIndex(
+            (p) => p.esBorrador === evento.trazo!.borrador,
+          );
+          if (idx >= 0) {
+            trazosLocalesPendientesRef.current.splice(idx, 1);
+          } else if (trazosLocalesPendientesRef.current.length > 0) {
+            trazosLocalesPendientesRef.current.shift();
+          }
+          trazosLocalesPendientesRef.current = trazosLocalesPendientesRef.current.filter(
+            (p) => ahora - p.creadoEn < 8000,
+          );
         }
+
+        // Siempre solicitar redibujado ordenado para garantizar composición 100% consistente
+        solicitarRedibujado();
       } else if (evento.tipo === 'TRAZO_PARCIAL' && evento.trazo && ctx) {
         // Trazado en progreso en tiempo real de otro participante
         if (evento.trazo.autorId === sesion.usuarioId) return;
@@ -310,11 +386,13 @@ export function PartyRoomPage() {
               opacidad: evento.trazo.opacidad,
             },
             esBorrador: evento.trazo.borrador,
+            puntos: [],
             ultimoPunto: null,
           };
           remotosRef.current.set(clave, estadoRemoto);
         }
         for (const p of evento.trazo.puntos) {
+          estadoRemoto.puntos.push(p);
           if (estadoRemoto.ultimoPunto) {
             if (estadoRemoto.esBorrador) {
               dibujarBorrado(ctx, [estadoRemoto.ultimoPunto, p], estadoRemoto.estilo.grosor || 40, ancho, alto);
@@ -336,7 +414,7 @@ export function PartyRoomPage() {
       .finally(() => setCargando(false));
 
     return desuscribir;
-  }, [salaId, sesion, cargarEstado, redibujarTodo]);
+  }, [salaId, sesion, cargarEstado, solicitarRedibujado]);
 
   function coordenadas(e: React.PointerEvent<HTMLCanvasElement>): Punto {
     const canvas = canvasRef.current;
@@ -369,25 +447,21 @@ export function PartyRoomPage() {
     const { ancho, alto } = dimRef.current;
     const ctx = ctxRef.current;
     const id = generarUUID();
-    propioTrazoRef.current = { id, puntos: [punto], pendientes: [punto] };
+    const esBorrador = miHerramienta === 'BORRADOR';
+    const estilo: EstiloPincel = {
+      tipoPincel: esBorrador ? 'LAPIZ' : miHerramienta,
+      colorHex: herramientaEstilo.colorHex,
+      grosor: herramientaEstilo.grosor,
+      opacidad: herramientaEstilo.opacidad,
+    };
+    propioTrazoRef.current = { id, estilo, esBorrador, puntos: [punto], pendientes: [punto] };
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
 
     if (ctx) {
-      if (miHerramienta === 'BORRADOR') {
-        dibujarBorrado(ctx, [punto], herramientaEstilo.grosor || 40, ancho, alto);
+      if (esBorrador) {
+        dibujarBorrado(ctx, [punto], estilo.grosor || 40, ancho, alto);
       } else {
-        dibujarPunto(
-          ctx,
-          {
-            tipoPincel: miHerramienta,
-            colorHex: herramientaEstilo.colorHex,
-            grosor: herramientaEstilo.grosor,
-            opacidad: herramientaEstilo.opacidad,
-          },
-          punto,
-          ancho,
-          alto,
-        );
+        dibujarPunto(ctx, estilo, punto, ancho, alto);
       }
     }
 
@@ -402,22 +476,10 @@ export function PartyRoomPage() {
     const anterior = actual.puntos[actual.puntos.length - 1];
     const { ancho, alto } = dimRef.current;
 
-    if (miHerramienta === 'BORRADOR') {
-      dibujarBorrado(ctx, [anterior, punto], herramientaEstilo.grosor || 40, ancho, alto);
+    if (actual.esBorrador) {
+      dibujarBorrado(ctx, [anterior, punto], actual.estilo.grosor || 40, ancho, alto);
     } else {
-      dibujarSegmento(
-        ctx,
-        {
-          tipoPincel: miHerramienta,
-          colorHex: herramientaEstilo.colorHex,
-          grosor: herramientaEstilo.grosor,
-          opacidad: herramientaEstilo.opacidad,
-        },
-        anterior,
-        punto,
-        ancho,
-        alto,
-      );
+      dibujarSegmento(ctx, actual.estilo, anterior, punto, ancho, alto);
     }
     actual.puntos.push(punto);
     actual.pendientes.push(punto);
@@ -439,17 +501,26 @@ export function PartyRoomPage() {
       enviarParcial(actual.pendientes);
     }
 
-    if (miHerramienta === 'BORRADOR') {
+    // Registrar en pendientes locales para que jamás se borre en redibujados concurrentes
+    trazosLocalesPendientesRef.current.push({
+      id: actual.id,
+      estilo: actual.estilo,
+      esBorrador: actual.esBorrador,
+      puntos: [...actual.puntos],
+      creadoEn: Date.now(),
+    });
+
+    if (actual.esBorrador) {
       stompService.publicar(`/app/fiesta/${salaId}/borrar`, {
         puntos: actual.puntos,
-        grosor: herramientaEstilo.grosor || 40,
+        grosor: actual.estilo.grosor || 40,
       });
     } else {
       stompService.publicar(`/app/fiesta/${salaId}/trazo`, {
-        tipoPincel: miHerramienta,
-        colorHex: herramientaEstilo.colorHex,
-        grosor: herramientaEstilo.grosor,
-        opacidad: herramientaEstilo.opacidad,
+        tipoPincel: actual.estilo.tipoPincel,
+        colorHex: actual.estilo.colorHex,
+        grosor: actual.estilo.grosor,
+        opacidad: actual.estilo.opacidad,
         puntos: actual.puntos,
       });
     }
