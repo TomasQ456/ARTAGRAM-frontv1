@@ -121,7 +121,8 @@ export interface PartyEvento {
     | 'BORRADOR_LIBERADO'
     | 'HERRAMIENTA_TOMADA'
     | 'HERRAMIENTA_LIBERADA'
-    | 'TRAZO';
+    | 'TRAZO'
+    | 'TRAZO_PARCIAL';
   msRestantes: number | null;
   trazo: PartyTrazoDto | null;
   propietarioBorrador: string | null;

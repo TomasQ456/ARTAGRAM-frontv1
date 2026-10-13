@@ -6,6 +6,7 @@ import { useAuthStore } from '../../lib/authStore';
 import { dibujarPunto, dibujarSegmento, dibujarTrazoCompleto, type EstiloPincel } from '../../lib/canvasEngine';
 import { BrushToolbar, type Herramienta } from './BrushToolbar';
 import { PublishWizard } from '../feed/PublishWizard';
+import { generarUUID } from '../../lib/uuid';
 import type { BloqueoEvento, ComunidadResponse, Punto, TrazoDto, TrazoEvento } from '../../types';
 
 interface TrazoRemotoEnProgreso {
@@ -149,7 +150,7 @@ export function CanvasStudioPage() {
       if (evento.tipo === 'FINAL') {
         if (evento.secuencia != null) {
           const dto: TrazoDto = {
-            id: evento.trazoEnProgresoId ?? crypto.randomUUID(),
+            id: evento.trazoEnProgresoId ?? generarUUID(),
             secuencia: evento.secuencia,
             autorId: evento.autorId,
             autorNombre: evento.autorNombre,
@@ -172,7 +173,7 @@ export function CanvasStudioPage() {
       if (evento.tipo === 'EDITADO') {
         if (evento.secuencia != null) {
           trazosRef.current.set(evento.secuencia, {
-            id: evento.trazoEnProgresoId ?? crypto.randomUUID(),
+            id: evento.trazoEnProgresoId ?? generarUUID(),
             secuencia: evento.secuencia,
             autorId: evento.autorId,
             autorNombre: evento.autorNombre,
@@ -221,10 +222,13 @@ export function CanvasStudioPage() {
   }, [comunidadId, sesion?.accessToken, redibujarTodo]);
 
   function coordenadasRelativas(e: React.PointerEvent<HTMLCanvasElement>): Punto {
-    const rect = e.currentTarget.getBoundingClientRect();
+    const canvas = canvasRef.current;
+    const rect = canvas ? canvas.getBoundingClientRect() : e.currentTarget.getBoundingClientRect();
+    const w = rect.width || 1;
+    const h = rect.height || 1;
     return {
-      x: Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)),
-      y: Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)),
+      x: Math.min(1, Math.max(0, (e.clientX - rect.left) / w)),
+      y: Math.min(1, Math.max(0, (e.clientY - rect.top) / h)),
     };
   }
 
@@ -266,7 +270,7 @@ export function CanvasStudioPage() {
       return;
     }
 
-    const id = crypto.randomUUID();
+    const id = generarUUID();
     propioTrazoRef.current = { id, puntos: [punto], pendientes: [punto] };
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
 

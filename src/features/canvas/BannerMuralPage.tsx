@@ -5,6 +5,7 @@ import { stompService } from '../../lib/stompClient';
 import { useAuthStore } from '../../lib/authStore';
 import { dibujarSegmento, dibujarTrazoCompleto } from '../../lib/canvasEngine';
 import { BrushToolbar, type Herramienta } from './BrushToolbar';
+import { generarUUID } from '../../lib/uuid';
 import type { BannerTrazoEvento, Punto, RegionEstado } from '../../types';
 
 const REGIONES_POR_LADO = 10;
@@ -86,7 +87,7 @@ export function BannerMuralPage() {
 
   function alPresionar(e: React.PointerEvent<HTMLCanvasElement>) {
     const punto = coordenadas(e);
-    dibujandoRef.current = { regionIndex: regionDe(punto), puntos: [aLocal(punto, regionDe(punto))], trazoId: crypto.randomUUID() };
+    dibujandoRef.current = { regionIndex: regionDe(punto), puntos: [aLocal(punto, regionDe(punto))], trazoId: generarUUID() };
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   }
 
