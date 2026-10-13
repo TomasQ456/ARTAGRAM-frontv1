@@ -26,6 +26,13 @@ export interface ComunidadResponse {
   miRol: string | null;
 }
 
+export interface MiembroComunidadDto {
+  usuarioId: string;
+  nombreArtista: string;
+  rol: string;
+  unidoEn: string;
+}
+
 export interface TrazoEvento {
   tipo: 'PARCIAL' | 'FINAL' | 'EDITADO';
   trazoEnProgresoId: string | null;
