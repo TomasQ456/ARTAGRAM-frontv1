@@ -53,6 +53,7 @@ export function PartyRoomPage() {
   const remotosRef = useRef<Map<string, TrazoRemotoEnProgreso>>(new Map());
   const relojRef = useRef<{ recibidoEn: number; msRestantes: number }>({ recibidoEn: 0, msRestantes: 0 });
   const enRondaRef = useRef(false);
+  const ultimoEnvioRef = useRef<number>(0);
 
   const esAnfitrion = !!(sala && sesion && sala.anfitrionNombre === sesion.nombreArtista);
   const enRonda = estado?.estadoSala === 'EN_RONDA';
@@ -202,6 +203,7 @@ export function PartyRoomPage() {
         });
         setMiHerramienta((actual) => (actual === 'BORRADOR' ? null : actual));
       } else if (evento.tipo === 'TRAZO' && evento.trazo) {
+        remotosRef.current.delete(`${evento.trazo.autorId}_party`);
         trazosRef.current.set(evento.trazo.secuencia, evento.trazo);
         maxSecuenciaRef.current = Math.max(maxSecuenciaRef.current, evento.trazo.secuencia);
         if (evento.trazo.autorId !== sesion.usuarioId) {
@@ -333,9 +335,11 @@ export function PartyRoomPage() {
     actual.puntos.push(punto);
     actual.pendientes.push(punto);
 
-    if (actual.pendientes.length >= 3 && salaId) {
+    const ahora = performance.now();
+    if ((actual.pendientes.length >= 2 || ahora - ultimoEnvioRef.current > 25) && salaId) {
       enviarParcial(actual.pendientes);
       actual.pendientes = [punto];
+      ultimoEnvioRef.current = ahora;
     }
   }
 

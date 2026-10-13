@@ -107,15 +107,16 @@ describe('dibujarTrazoCompleto', () => {
     expect(ctx.stroke).not.toHaveBeenCalled();
   });
 
-  it('N puntos se dibujan como N-1 segmentos consecutivos, en orden', () => {
+  it('N puntos se trazan como un camino continuo con N-1 lineas consecutivas', () => {
     const ctx = crearContextoFalso();
     const estilo: EstiloPincel = { tipoPincel: 'LAPIZ', colorHex: '#000', grosor: 10, opacidad: 1 };
     const puntos = [{ x: 0, y: 0 }, { x: 0.2, y: 0.2 }, { x: 0.4, y: 0.4 }, { x: 0.6, y: 0.6 }];
 
     dibujarTrazoCompleto(ctx, estilo, puntos, LADO_PX);
 
-    expect(ctx.stroke).toHaveBeenCalledTimes(puntos.length - 1);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
     expect(ctx.moveTo).toHaveBeenNthCalledWith(1, 0, 0);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(puntos.length - 1);
     expect(ctx.lineTo).toHaveBeenNthCalledWith(3, 0.6 * LADO_PX, 0.6 * LADO_PX);
   });
 });

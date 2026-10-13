@@ -22,41 +22,37 @@ function aplicarEstilo(ctx: CanvasRenderingContext2D, estilo: EstiloPincel, esca
 
   switch (estilo.tipoPincel) {
     case 'ACUARELA':
-      ctx.globalCompositeOperation = 'multiply';
-      ctx.globalAlpha = Math.min(0.85, estilo.opacidad * 0.8);
-      ctx.lineWidth = grosorPx * 1.6;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = Math.min(0.75, estilo.opacidad * 0.7);
+      ctx.lineWidth = Math.max(2, grosorPx * 1.5);
       ctx.strokeStyle = estilo.colorHex;
-      ctx.filter = 'blur(0.6px)';
       break;
     case 'MARCADOR':
       ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = estilo.opacidad;
-      ctx.lineWidth = grosorPx * 1.15;
+      ctx.globalAlpha = Math.min(0.9, estilo.opacidad);
+      ctx.lineWidth = Math.max(2, grosorPx * 1.2);
       ctx.strokeStyle = estilo.colorHex;
-      ctx.lineCap = 'square';
-      ctx.filter = 'none';
       break;
     case 'PLUMA':
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = estilo.opacidad;
-      ctx.lineWidth = Math.max(0.8, grosorPx * 0.4);
+      ctx.lineWidth = Math.max(1, grosorPx * 0.35);
       ctx.strokeStyle = estilo.colorHex;
-      ctx.filter = 'none';
       break;
     case 'AEROGRAFO':
       ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = Math.min(0.6, estilo.opacidad * 0.45);
-      ctx.lineWidth = grosorPx * 2.2;
+      ctx.globalAlpha = Math.min(0.55, estilo.opacidad * 0.45);
+      ctx.lineWidth = Math.max(3, grosorPx * 1.8);
       ctx.strokeStyle = estilo.colorHex;
-      ctx.filter = 'blur(2px)';
+      ctx.shadowColor = estilo.colorHex;
+      ctx.shadowBlur = Math.max(4, grosorPx * 0.8);
       break;
     case 'LAPIZ':
     default:
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = estilo.opacidad;
-      ctx.lineWidth = Math.max(1, grosorPx * 0.5);
+      ctx.lineWidth = Math.max(1.2, grosorPx * 0.5);
       ctx.strokeStyle = estilo.colorHex;
-      ctx.filter = 'none';
       break;
   }
 }
@@ -64,7 +60,11 @@ function aplicarEstilo(ctx: CanvasRenderingContext2D, estilo: EstiloPincel, esca
 function restaurar(ctx: CanvasRenderingContext2D) {
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
-  ctx.filter = 'none';
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = 'transparent';
+  if (ctx.filter && ctx.filter !== 'none') {
+    ctx.filter = 'none';
+  }
 }
 
 export function dibujarSegmento(
@@ -93,7 +93,7 @@ export function dibujarPunto(
 ) {
   const escala = Math.min(anchoPx, altoPx);
   aplicarEstilo(ctx, estilo, escala);
-  const radio = ctx.lineWidth / 2;
+  const radio = Math.max(1, ctx.lineWidth / 2);
   ctx.beginPath();
   ctx.arc(punto.x * anchoPx, punto.y * altoPx, radio, 0, Math.PI * 2);
   ctx.fillStyle = estilo.colorHex;
@@ -113,9 +113,15 @@ export function dibujarTrazoCompleto(
     dibujarPunto(ctx, estilo, puntos[0], anchoPx, altoPx);
     return;
   }
-  for (let i = 0; i < puntos.length - 1; i++) {
-    dibujarSegmento(ctx, estilo, puntos[i], puntos[i + 1], anchoPx, altoPx);
+  const escala = Math.min(anchoPx, altoPx);
+  aplicarEstilo(ctx, estilo, escala);
+  ctx.beginPath();
+  ctx.moveTo(puntos[0].x * anchoPx, puntos[0].y * altoPx);
+  for (let i = 1; i < puntos.length; i++) {
+    ctx.lineTo(puntos[i].x * anchoPx, puntos[i].y * altoPx);
   }
+  ctx.stroke();
+  restaurar(ctx);
 }
 
 /** Borrador del modo fiesta: "quita" pintura en vez de agregar color. */

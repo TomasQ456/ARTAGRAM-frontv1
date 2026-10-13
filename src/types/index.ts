@@ -130,6 +130,14 @@ export interface PartyEvento {
   propietarioHerramienta?: string | null;
 }
 
+export interface ConversacionResumenDto {
+  contactoId: string;
+  contactoNombre: string;
+  ultimoMensaje: string;
+  ultimoMensajeEn: string;
+  entregado: boolean;
+}
+
 export interface MensajePersonalDto {
   id: string;
   remitenteId: string;

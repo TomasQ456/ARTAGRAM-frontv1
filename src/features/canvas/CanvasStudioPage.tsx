@@ -44,6 +44,7 @@ export function CanvasStudioPage() {
   const propioTrazoRef = useRef<{ id: string; puntos: Punto[]; pendientes: Punto[] } | null>(null);
   const remotosRef = useRef<Map<string, TrazoRemotoEnProgreso>>(new Map());
   const puntosEdicionRef = useRef<Punto[]>([]);
+  const ultimoEnvioRef = useRef<number>(0);
 
   const redibujarTodo = useCallback(() => {
     const ctx = ctxRef.current;
@@ -325,10 +326,11 @@ export function CanvasStudioPage() {
     actual.puntos.push(punto);
     actual.pendientes.push(punto);
 
-    // Si se acumulan 3 puntos en movimiento, despachar inmediatamente para que los demás lo vean en tiempo real
-    if (actual.pendientes.length >= 3 && comunidadId) {
+    const ahora = performance.now();
+    if ((actual.pendientes.length >= 2 || ahora - ultimoEnvioRef.current > 25) && comunidadId) {
       enviarParcial(comunidadId, actual.id, actual.pendientes);
       actual.pendientes = [punto]; // Deja el punto actual como origen del siguiente lote
+      ultimoEnvioRef.current = ahora;
     }
   }
 
