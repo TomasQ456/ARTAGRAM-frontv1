@@ -128,25 +128,37 @@ export function CommunityDetailPage() {
       {/* MURAL INTERACTIVO EXPANDIBLE ESTILO MODO FIESTA */}
       {pintandoBanner && (
         <div className="mb-6 card p-6 border-coral/30 bg-ink-900/95 shadow-2xl backdrop-blur-md">
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h2 className="font-display text-lg font-semibold text-coral">Lienzo Mural de la Comunidad</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="font-display text-lg font-semibold text-coral">Lienzo Mural de la Comunidad</h2>
+                <span className="rounded bg-coral/20 px-2 py-0.5 text-[11px] font-semibold text-coral">Permanente</span>
+              </div>
               <p className="text-xs text-paper-muted">
-                Dibuja con cualquier pincel o borrador de forma continua. Tus trazos quedan grabados permanentemente en el mural.
+                Dibuja con la barra completa de herramientas o el borrador. Tus trazos quedan grabados en tiempo real y decoran el fondo de la comunidad.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setPintandoBanner(false)}
-              className="text-paper-muted hover:text-coral transition-colors"
-            >
-              ✕ Cerrar
-            </button>
+            <div className="flex items-center gap-2">
+              <Link
+                to={`/comunidades/${id}/banner`}
+                className="rounded-lg border border-violet/40 bg-violet/10 px-2.5 py-1 text-xs text-violet-light hover:bg-violet/20 transition-colors"
+              >
+                Abrir en pantalla completa ↗
+              </Link>
+              <button
+                type="button"
+                onClick={() => setPintandoBanner(false)}
+                className="text-paper-muted hover:text-coral transition-colors text-sm px-2 py-1"
+                title="Cerrar pintor"
+              >
+                ✕ Cerrar
+              </button>
+            </div>
           </div>
           <CommunityBannerMural
             comunidadId={id}
             interactivo={true}
-            alturaPx={450}
+            alturaPx={520}
             onCerrarEdicion={() => setPintandoBanner(false)}
           />
         </div>

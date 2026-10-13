@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { api, extraerMensajeError } from '../../lib/api';
 import { stompService } from '../../lib/stompClient';
 import { useAuthStore } from '../../lib/authStore';
-import { dibujarPunto, dibujarSegmento, dibujarTrazoCompleto, dibujarBorrado, type EstiloPincel } from '../../lib/canvasEngine';
+import { dibujarPunto, dibujarSegmento, dibujarTrazoCompleto, type EstiloPincel } from '../../lib/canvasEngine';
 import { BrushToolbar, type Herramienta } from '../canvas/BrushToolbar';
 import { Button } from '../../components/ui/Button';
 import type { BannerTrazoEvento, Punto, RegionEstado, TipoPincel } from '../../types';
@@ -14,16 +14,24 @@ interface Props {
   comunidadId: string;
   interactivo?: boolean;
   alturaPx?: number;
+  mostrarBarraHerramientas?: boolean;
   onCerrarEdicion?: () => void;
 }
 
-export function CommunityBannerMural({ comunidadId, interactivo = false, alturaPx = 280, onCerrarEdicion }: Props) {
+export function CommunityBannerMural({
+  comunidadId,
+  interactivo = false,
+  alturaPx = 280,
+  mostrarBarraHerramientas = true,
+  onCerrarEdicion,
+}: Props) {
   const sesion = useAuthStore((s) => s.sesion);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
 
   const [cargando, setCargando] = useState(true);
+  const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [herramienta, setHerramienta] = useState<Herramienta>({
     tipoPincel: 'MARCADOR',
@@ -35,8 +43,9 @@ export function CommunityBannerMural({ comunidadId, interactivo = false, alturaP
 
   // Almacén en memoria de snapshots y trazos de las 100 regiones
   const regionesRef = useRef<Map<number, { snapshotBase64: string | null; trazos: BannerTrazoEvento[] }>>(new Map());
+  const imageCacheRef = useRef<Map<number, HTMLImageElement>>(new Map());
   const trazoActualRef = useRef<{ puntos: Punto[]; estilo: EstiloPincel; esBorrador: boolean } | null>(null);
-  const dimRef = useRef<{ ancho: number; alto: number }>({ ancho: 1000, alto: 1000 });
+  const dimRef = useRef<{ ancho: number; alto: number }>({ ancho: 1000, alto: alturaPx });
 
   function regionDe(punto: Punto): number {
     const col = Math.min(REGIONES_POR_LADO - 1, Math.max(0, Math.floor(punto.x / TAMANO_REGION)));
@@ -75,25 +84,41 @@ export function CommunityBannerMural({ comunidadId, interactivo = false, alturaP
     const pasoX = ancho / REGIONES_POR_LADO;
     const pasoY = alto / REGIONES_POR_LADO;
 
-    // 1. Dibujar snapshots de regiones
+    // 1. Dibujar snapshots de regiones (con caché de imágenes para rendimiento)
     const promesas: Promise<void>[] = [];
     for (const [regionIndex, reg] of regionesRef.current.entries()) {
       if (reg.snapshotBase64) {
-        const p = new Promise<void>((resolve) => {
-          const img = new Image();
-          img.onload = () => {
-            const col = regionIndex % REGIONES_POR_LADO;
-            const fila = Math.floor(regionIndex / REGIONES_POR_LADO);
-            ctx.drawImage(img, col * pasoX, fila * pasoY, pasoX, pasoY);
-            resolve();
-          };
-          img.onerror = () => resolve();
-          img.src = `data:image/png;base64,${reg.snapshotBase64}`;
-        });
-        promesas.push(p);
+        let img = imageCacheRef.current.get(regionIndex);
+        if (!img || img.dataset.srcBase64 !== reg.snapshotBase64) {
+          const p = new Promise<void>((resolve) => {
+            const nuevaImg = new Image();
+            nuevaImg.onload = () => {
+              nuevaImg.dataset.srcBase64 = reg.snapshotBase64!;
+              imageCacheRef.current.set(regionIndex, nuevaImg);
+              resolve();
+            };
+            nuevaImg.onerror = () => resolve();
+            nuevaImg.src = `data:image/png;base64,${reg.snapshotBase64}`;
+          });
+          promesas.push(p);
+        }
       }
     }
-    await Promise.all(promesas);
+    if (promesas.length > 0) {
+      await Promise.all(promesas);
+    }
+
+    // Dibujar snapshots cargados
+    for (const [regionIndex, reg] of regionesRef.current.entries()) {
+      if (reg.snapshotBase64) {
+        const img = imageCacheRef.current.get(regionIndex);
+        if (img) {
+          const col = regionIndex % REGIONES_POR_LADO;
+          const fila = Math.floor(regionIndex / REGIONES_POR_LADO);
+          ctx.drawImage(img, col * pasoX, fila * pasoY, pasoX, pasoY);
+        }
+      }
+    }
 
     // 2. Dibujar trazos guardados desde el snapshot
     for (const [regionIndex, reg] of regionesRef.current.entries()) {
@@ -146,8 +171,12 @@ export function CommunityBannerMural({ comunidadId, interactivo = false, alturaP
           });
         }
         await redibujarTodo();
+        setError(null);
       } catch (err) {
-        if (activo) setError(extraerMensajeError(err));
+        if (activo) {
+          console.warn('No se pudo cargar el banner inicial:', err);
+          setError(extraerMensajeError(err));
+        }
       } finally {
         if (activo) setCargando(false);
       }
@@ -161,6 +190,10 @@ export function CommunityBannerMural({ comunidadId, interactivo = false, alturaP
 
     const desuscribir = stompService.suscribir<BannerTrazoEvento>(`/topic/banner/${comunidadId}`, (evento) => {
       if (!activo) return;
+      // Si el autor es el usuario actual, ya lo dibujamos y almacenamos localmente en tiempo real
+      if (evento.autorId === sesion?.usuarioId) {
+        return;
+      }
       let reg = regionesRef.current.get(evento.regionIndex);
       if (!reg) {
         reg = { snapshotBase64: null, trazos: [] };
@@ -186,9 +219,9 @@ export function CommunityBannerMural({ comunidadId, interactivo = false, alturaP
       activo = false;
       desuscribir();
     };
-  }, [comunidadId, sesion?.accessToken, redibujarTodo]);
+  }, [comunidadId, sesion?.accessToken, sesion?.usuarioId, redibujarTodo]);
 
-  // Ajuste de tamaño dinámico del lienzo
+  // Ajuste de tamaño dinámico y resolución del lienzo
   useEffect(() => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
@@ -197,7 +230,7 @@ export function CommunityBannerMural({ comunidadId, interactivo = false, alturaP
     function ajustar() {
       if (!container || !canvas) return;
       const ancho = Math.max(300, Math.floor(container.clientWidth));
-      const alto = interactivo ? Math.max(350, Math.floor(container.clientHeight || alturaPx)) : alturaPx;
+      const alto = alturaPx;
 
       if (canvas.width !== ancho || canvas.height !== alto) {
         canvas.width = ancho;
@@ -212,7 +245,7 @@ export function CommunityBannerMural({ comunidadId, interactivo = false, alturaP
     const observer = new ResizeObserver(() => ajustar());
     observer.observe(container);
     return () => observer.disconnect();
-  }, [alturaPx, interactivo, redibujarTodo]);
+  }, [alturaPx, redibujarTodo]);
 
   function coordenadas(e: React.PointerEvent<HTMLCanvasElement>): Punto {
     const canvas = canvasRef.current;
@@ -227,6 +260,11 @@ export function CommunityBannerMural({ comunidadId, interactivo = false, alturaP
 
   function alPresionar(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!interactivo) return;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
     const punto = coordenadas(e);
     const { ancho, alto } = dimRef.current;
     const ctx = ctxRef.current;
@@ -234,19 +272,14 @@ export function CommunityBannerMural({ comunidadId, interactivo = false, alturaP
     const estilo: EstiloPincel = {
       tipoPincel: esBorrador ? 'LAPIZ' : herramienta.tipoPincel,
       colorHex: esBorrador ? '#F5F1EA' : herramienta.colorHex,
-      grosor: herramienta.grosor,
+      grosor: esBorrador ? Math.max(14, herramienta.grosor * 1.4) : herramienta.grosor,
       opacidad: esBorrador ? 1 : herramienta.opacidad,
     };
 
     trazoActualRef.current = { puntos: [punto], estilo, esBorrador };
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
 
     if (ctx) {
-      if (esBorrador) {
-        dibujarBorrado(ctx, [punto], estilo.grosor * 1.5, ancho, alto);
-      } else {
-        dibujarPunto(ctx, estilo, punto, ancho, alto);
-      }
+      dibujarPunto(ctx, estilo, punto, ancho, alto);
     }
   }
 
@@ -254,21 +287,31 @@ export function CommunityBannerMural({ comunidadId, interactivo = false, alturaP
     if (!interactivo) return;
     const ctx = ctxRef.current;
     const actual = trazoActualRef.current;
-    if (!ctx || e.buttons !== 1 || !actual) return;
+    if (!ctx || !actual) return;
+
+    if (e.pointerType === 'mouse' && e.buttons === 0) {
+      alSoltar(e);
+      return;
+    }
 
     const punto = coordenadas(e);
     const anterior = actual.puntos[actual.puntos.length - 1];
     const { ancho, alto } = dimRef.current;
 
-    if (actual.esBorrador) {
-      dibujarBorrado(ctx, [anterior, punto], actual.estilo.grosor * 1.5, ancho, alto);
-    } else {
-      dibujarSegmento(ctx, actual.estilo, anterior, punto, ancho, alto);
-    }
+    dibujarSegmento(ctx, actual.estilo, anterior, punto, ancho, alto);
     actual.puntos.push(punto);
   }
 
-  async function alSoltar() {
+  async function alSoltar(e?: React.PointerEvent<HTMLCanvasElement>) {
+    if (e && canvasRef.current) {
+      try {
+        if (canvasRef.current.hasPointerCapture(e.pointerId)) {
+          canvasRef.current.releasePointerCapture(e.pointerId);
+        }
+      } catch {
+        // ignore
+      }
+    }
     if (!interactivo) return;
     const actual = trazoActualRef.current;
     trazoActualRef.current = null;
@@ -289,31 +332,65 @@ export function CommunityBannerMural({ comunidadId, interactivo = false, alturaP
       }
     }
 
-    // Enviar cada segmento para que quede guardado permanentemente en base de datos y snapshots
+    // 1. Guardar de inmediato en memoria local para que redibujarTodo NO borre el trazo
     for (const seg of segmentosPorRegion) {
       if (seg.puntos.length === 0) continue;
-      try {
-        await api.post(`/api/comunidades/${comunidadId}/banner/pintar`, {
-          regionIndex: seg.regionIndex,
-          tipoPincel: actual.esBorrador ? 'LAPIZ' : actual.estilo.tipoPincel,
-          colorHex: actual.esBorrador ? '#F5F1EA' : actual.estilo.colorHex,
-          grosor: actual.estilo.grosor,
-          opacidad: actual.estilo.opacidad,
-          puntos: seg.puntos,
-        });
-      } catch {
-        // En caso de rate-limit o microerror, el canvas local ya lo muestra
+      let regMem = regionesRef.current.get(seg.regionIndex);
+      if (!regMem) {
+        regMem = { snapshotBase64: null, trazos: [] };
+        regionesRef.current.set(seg.regionIndex, regMem);
       }
+      regMem.trazos.push({
+        regionIndex: seg.regionIndex,
+        secuencia: Date.now(),
+        autorId: sesion?.usuarioId ?? '',
+        autorNombre: sesion?.nombreArtista ?? 'Tú',
+        tipoPincel: actual.esBorrador ? 'LAPIZ' : actual.estilo.tipoPincel,
+        colorHex: actual.esBorrador ? '#F5F1EA' : actual.estilo.colorHex,
+        grosor: actual.estilo.grosor,
+        opacidad: actual.estilo.opacidad,
+        puntos: seg.puntos,
+      });
+    }
+
+    // 2. Persistir en base de datos dividiendo en bloques <= 250 puntos si el trazo es extenso
+    setGuardando(true);
+    try {
+      for (const seg of segmentosPorRegion) {
+        if (seg.puntos.length === 0) continue;
+        const CHUNK_SIZE = 250;
+        for (let i = 0; i < seg.puntos.length; i += CHUNK_SIZE) {
+          const chunk = seg.puntos.slice(i, i + CHUNK_SIZE);
+          await api.post(`/api/comunidades/${comunidadId}/banner/pintar`, {
+            regionIndex: seg.regionIndex,
+            tipoPincel: actual.esBorrador ? 'LAPIZ' : actual.estilo.tipoPincel,
+            colorHex: actual.esBorrador ? '#F5F1EA' : actual.estilo.colorHex,
+            grosor: actual.estilo.grosor,
+            opacidad: actual.estilo.opacidad,
+            puntos: chunk,
+          });
+        }
+      }
+      setError(null);
+    } catch (err) {
+      console.warn('Error al guardar segmento de banner:', err);
+      setError(extraerMensajeError(err));
+    } finally {
+      setGuardando(false);
     }
   }
 
   return (
-    <div ref={containerRef} className="relative w-full overflow-hidden select-none">
+    <div
+      ref={containerRef}
+      className="relative w-full overflow-hidden select-none"
+      style={{ height: `${alturaPx}px` }}
+    >
       {/* Canvas Mural */}
       <canvas
         ref={canvasRef}
-        className={`w-full ${interactivo ? 'cursor-crosshair touch-none' : 'pointer-events-none'}`}
-        style={{ height: interactivo ? undefined : alturaPx }}
+        className={`w-full block ${interactivo ? 'cursor-crosshair touch-none' : 'pointer-events-none'}`}
+        style={{ height: `${alturaPx}px`, width: '100%' }}
         onPointerDown={alPresionar}
         onPointerMove={alMover}
         onPointerUp={alSoltar}
@@ -326,15 +403,25 @@ export function CommunityBannerMural({ comunidadId, interactivo = false, alturaP
         </div>
       )}
 
+      {/* Indicador de estado de persistencia */}
+      <div className="absolute top-2 right-2 z-20 flex items-center gap-2">
+        {guardando && (
+          <span className="flex items-center gap-1.5 rounded-full bg-ink-900/90 border border-coral/40 px-2.5 py-1 text-[11px] font-medium text-coral-light backdrop-blur-md shadow-md animate-pulse">
+            <span className="h-2 w-2 rounded-full bg-coral animate-ping" />
+            Grabando en mural permanente…
+          </span>
+        )}
+      </div>
+
       {error && (
-        <div className="absolute bottom-2 left-2 z-20 rounded bg-coral/20 px-2 py-1 text-xs text-coral-light">
+        <div className="absolute bottom-2 left-2 z-20 rounded bg-coral/30 border border-coral px-2.5 py-1 text-xs text-coral-light backdrop-blur-md">
           {error}
         </div>
       )}
 
-      {/* Barra de herramientas interactiva estilo fiesta si está activo el modo pintor */}
-      {interactivo && (
-        <div className="mt-3 flex flex-col gap-2 rounded-2xl border border-ink-800 bg-ink-900/90 p-3 shadow-2xl backdrop-blur-md">
+      {/* Barra de herramientas flotante estilo fiesta si está activo el modo pintor */}
+      {interactivo && mostrarBarraHerramientas && (
+        <div className="absolute bottom-3 left-3 right-3 z-30 flex flex-col gap-2 rounded-2xl border border-ink-700 bg-ink-950/95 p-3 shadow-2xl backdrop-blur-md">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <BrushToolbar
               herramienta={herramienta}
@@ -350,14 +437,14 @@ export function CommunityBannerMural({ comunidadId, interactivo = false, alturaP
                 onClick={() => setEsBorrador((v) => !v)}
                 className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
                   esBorrador
-                    ? 'bg-coral text-ink-950 shadow-glow-coral'
+                    ? 'bg-coral text-ink-950 shadow-glow-coral font-bold'
                     : 'border border-ink-700 bg-ink-800 text-paper hover:bg-ink-700'
                 }`}
               >
                 {esBorrador ? '🧹 Borrador activo' : '🧹 Borrador'}
               </button>
               {onCerrarEdicion && (
-                <Button variant="secondary" onClick={onCerrarEdicion}>
+                <Button variant="primary" onClick={onCerrarEdicion} className="text-xs py-1.5 px-3">
                   Listo
                 </Button>
               )}
