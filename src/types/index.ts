@@ -13,6 +13,7 @@ export interface PerfilResponse {
   enlaces: { etiqueta: string; url: string }[];
   obrasDestacadas: { titulo: string; imagenUrl: string }[];
   esPropio: boolean;
+  premium?: boolean;
 }
 
 export interface ComunidadResponse {
