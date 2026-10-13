@@ -35,6 +35,11 @@ export function CanvasStudioPage() {
   const [aviso, setAviso] = useState<string | null>(null);
   const [trazoEnEdicion, setTrazoEnEdicion] = useState<TrazoDto | null>(null);
 
+  // Cursores remotos en tiempo real con nombre
+  const [cursoresRemotos, setCursoresRemotos] = useState<
+    Record<string, { autorId: string; autorNombre: string; colorHex: string; tipoPincel: string; x: number; y: number; actualizadoEn: number }>
+  >({});
+
   // Estado para el modal de publicación directa desde el lienzo
   const [modalPublicar, setModalPublicar] = useState(false);
   const [archivoPublicar, setArchivoPublicar] = useState<File | null>(null);
@@ -45,6 +50,26 @@ export function CanvasStudioPage() {
   const remotosRef = useRef<Map<string, TrazoRemotoEnProgreso>>(new Map());
   const puntosEdicionRef = useRef<Punto[]>([]);
   const ultimoEnvioRef = useRef<number>(0);
+
+  // Limpieza automática de cursores remotos inactivos
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const ahora = Date.now();
+      setCursoresRemotos((prev) => {
+        let cambiado = false;
+        const copia: Record<string, { autorId: string; autorNombre: string; colorHex: string; tipoPincel: string; x: number; y: number; actualizadoEn: number }> = {};
+        for (const [id, c] of Object.entries(prev)) {
+          if (ahora - c.actualizadoEn <= 2200) {
+            copia[id] = c;
+          } else {
+            cambiado = true;
+          }
+        }
+        return cambiado ? copia : prev;
+      });
+    }, 400);
+    return () => clearInterval(timer);
+  }, []);
 
   const redibujarTodo = useCallback(() => {
     const ctx = ctxRef.current;
@@ -167,6 +192,12 @@ export function CanvasStudioPage() {
           maxSecuenciaRef.current = Math.max(maxSecuenciaRef.current, dto.secuencia);
         }
         if (evento.trazoEnProgresoId) remotosRef.current.delete(evento.trazoEnProgresoId);
+        setCursoresRemotos((prev) => {
+          if (!prev[evento.autorId]) return prev;
+          const copia = { ...prev };
+          delete copia[evento.autorId];
+          return copia;
+        });
         if (!esPropio) redibujarTodo();
         return;
       }
@@ -193,6 +224,23 @@ export function CanvasStudioPage() {
 
       // Trazo en progreso recibido en tiempo real de otro usuario
       if (esPropio || !evento.trazoEnProgresoId) return;
+
+      if (evento.puntos && evento.puntos.length > 0) {
+        const ultimoPunto = evento.puntos[evento.puntos.length - 1];
+        setCursoresRemotos((prev) => ({
+          ...prev,
+          [evento.autorId]: {
+            autorId: evento.autorId,
+            autorNombre: evento.autorNombre || 'Artista',
+            colorHex: evento.colorHex || '#FF6B57',
+            tipoPincel: evento.tipoPincel || 'Pincel',
+            x: ultimoPunto.x,
+            y: ultimoPunto.y,
+            actualizadoEn: Date.now(),
+          },
+        }));
+      }
+
       const clave = evento.trazoEnProgresoId;
       let estado = remotosRef.current.get(clave);
       if (!estado) {
@@ -552,6 +600,49 @@ export function CanvasStudioPage() {
           onDoubleClick={alDobleClic}
           onContextMenu={alClicDerecho}
         />
+
+        {/* Capa de cursores e indicadores flotantes en tiempo real con nombre */}
+        <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
+          {Object.values(cursoresRemotos).map((cursor) => (
+            <div
+              key={cursor.autorId}
+              className="absolute transition-all duration-75 ease-out flex flex-col items-start select-none"
+              style={{
+                left: `${cursor.x * 100}%`,
+                top: `${cursor.y * 100}%`,
+                transform: 'translate(-4px, -34px)',
+              }}
+            >
+              {/* Badge flotante con nombre y herramienta del artista */}
+              <div
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-white shadow-xl border backdrop-blur-md whitespace-nowrap animate-in fade-in zoom-in-95 duration-100"
+                style={{
+                  backgroundColor: `${cursor.colorHex}E6`,
+                  borderColor: cursor.colorHex,
+                  boxShadow: `0 4px 14px ${cursor.colorHex}66`,
+                }}
+              >
+                <span className="text-xs">✏️</span>
+                <span className="font-semibold tracking-wide">{cursor.autorNombre}</span>
+                <span className="text-[10px] font-normal opacity-85">
+                  · {cursor.tipoPincel}
+                </span>
+              </div>
+
+              {/* Puntero que señala exactamente las coordenadas del trazo */}
+              <div className="relative mt-1 ml-1">
+                <div
+                  className="w-3.5 h-3.5 rounded-full border-2 border-white shadow-lg animate-ping absolute -inset-0.5 opacity-75"
+                  style={{ backgroundColor: cursor.colorHex }}
+                />
+                <div
+                  className="w-3 h-3 rounded-full border-2 border-white shadow-md"
+                  style={{ backgroundColor: cursor.colorHex }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
 
         {/* Panel flotante de edición de trazo bloqueado */}
         {trazoEnEdicion && (

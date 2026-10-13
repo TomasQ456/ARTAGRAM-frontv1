@@ -18,6 +18,17 @@ interface TrazoRemotoEnProgreso {
   ultimoPunto: Punto | null;
 }
 
+export interface CursorRemoto {
+  autorId: string;
+  autorNombre: string;
+  colorHex: string;
+  tipoPincel: string;
+  esBorrador: boolean;
+  x: number;
+  y: number;
+  actualizadoEn: number;
+}
+
 export function PartyRoomPage() {
   const { id: salaId } = useParams<{ id: string }>();
   const sesion = useAuthStore((s) => s.sesion);
@@ -38,6 +49,9 @@ export function PartyRoomPage() {
   const [iniciandoRonda, setIniciandoRonda] = useState(false);
   const [previewFinalUrl, setPreviewFinalUrl] = useState<string | null>(null);
   const [totalTrazos, setTotalTrazos] = useState(0);
+
+  // Cursores remotos en tiempo real con nombre
+  const [cursoresRemotos, setCursoresRemotos] = useState<Record<string, CursorRemoto>>({});
 
   // Exclusión mutua de herramientas: solo 1 persona por herramienta a la vez
   const [herramientasTomadas, setHerramientasTomadas] = useState<Record<string, string>>({});
@@ -168,6 +182,26 @@ export function PartyRoomPage() {
     }
   }, [terminado]);
 
+  // Limpieza automática de cursores remotos inactivos
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const ahora = Date.now();
+      setCursoresRemotos((prev) => {
+        let cambiado = false;
+        const copia: Record<string, CursorRemoto> = {};
+        for (const [id, c] of Object.entries(prev)) {
+          if (ahora - c.actualizadoEn <= 2200) {
+            copia[id] = c;
+          } else {
+            cambiado = true;
+          }
+        }
+        return cambiado ? copia : prev;
+      });
+    }, 400);
+    return () => clearInterval(timer);
+  }, []);
+
   // Conexión en tiempo real vía STOMP
   useEffect(() => {
     if (!salaId || !sesion) return;
@@ -234,12 +268,37 @@ export function PartyRoomPage() {
         remotosRef.current.delete(`${evento.trazo.autorId}_party`);
         trazosRef.current.set(evento.trazo.secuencia, evento.trazo);
         maxSecuenciaRef.current = Math.max(maxSecuenciaRef.current, evento.trazo.secuencia);
+        setCursoresRemotos((prev) => {
+          if (!prev[evento.trazo!.autorId]) return prev;
+          const copia = { ...prev };
+          delete copia[evento.trazo!.autorId];
+          return copia;
+        });
         if (evento.trazo.autorId !== sesion.usuarioId) {
           redibujarTodo();
         }
       } else if (evento.tipo === 'TRAZO_PARCIAL' && evento.trazo && ctx) {
         // Trazado en progreso en tiempo real de otro participante
         if (evento.trazo.autorId === sesion.usuarioId) return;
+
+        const puntos = evento.trazo.puntos;
+        if (puntos && puntos.length > 0) {
+          const ultimoPunto = puntos[puntos.length - 1];
+          setCursoresRemotos((prev) => ({
+            ...prev,
+            [evento.trazo!.autorId]: {
+              autorId: evento.trazo!.autorId,
+              autorNombre: evento.trazo!.autorNombre || 'Artista',
+              colorHex: evento.trazo!.colorHex ?? '#FF6B57',
+              tipoPincel: evento.trazo!.borrador ? 'Borrador' : (evento.trazo!.tipoPincel ?? 'Lápiz'),
+              esBorrador: evento.trazo!.borrador,
+              x: ultimoPunto.x,
+              y: ultimoPunto.y,
+              actualizadoEn: Date.now(),
+            },
+          }));
+        }
+
         const clave = `${evento.trazo.autorId}_party`;
         let estadoRemoto = remotosRef.current.get(clave);
         if (!estadoRemoto) {
@@ -630,6 +689,49 @@ export function PartyRoomPage() {
           onPointerUp={alSoltar}
           onPointerLeave={alSoltar}
         />
+
+        {/* Capa de cursores e indicadores flotantes en tiempo real con nombre */}
+        <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
+          {Object.values(cursoresRemotos).map((cursor) => (
+            <div
+              key={cursor.autorId}
+              className="absolute transition-all duration-75 ease-out flex flex-col items-start select-none"
+              style={{
+                left: `${cursor.x * 100}%`,
+                top: `${cursor.y * 100}%`,
+                transform: 'translate(-4px, -34px)',
+              }}
+            >
+              {/* Badge flotante con nombre y herramienta del artista */}
+              <div
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold text-white shadow-xl border backdrop-blur-md whitespace-nowrap animate-in fade-in zoom-in-95 duration-100"
+                style={{
+                  backgroundColor: cursor.esBorrador ? '#1E1B2E' : `${cursor.colorHex}E6`,
+                  borderColor: cursor.esBorrador ? '#A78BFA' : cursor.colorHex,
+                  boxShadow: `0 4px 14px ${cursor.colorHex}66`,
+                }}
+              >
+                <span className="text-xs">{cursor.esBorrador ? '🧹' : '✏️'}</span>
+                <span className="font-semibold tracking-wide">{cursor.autorNombre}</span>
+                <span className="text-[10px] font-normal opacity-85">
+                  · {cursor.tipoPincel}
+                </span>
+              </div>
+
+              {/* Puntero que señala exactamente las coordenadas del trazo */}
+              <div className="relative mt-1 ml-1">
+                <div
+                  className="w-3.5 h-3.5 rounded-full border-2 border-white shadow-lg animate-ping absolute -inset-0.5 opacity-75"
+                  style={{ backgroundColor: cursor.colorHex }}
+                />
+                <div
+                  className="w-3 h-3 rounded-full border-2 border-white shadow-md"
+                  style={{ backgroundColor: cursor.colorHex }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
 
         {/* Pantalla de inicio / sala de espera previa a la primera ronda */}
         {enEsperaInicial && !cargando && (
