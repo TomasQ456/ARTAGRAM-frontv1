@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { api, extraerMensajeError } from '../../lib/api';
+import { useAuthStore } from '../../lib/authStore';
 import { FondoArtistico } from '../../components/layout/FondoArtistico';
 import { Button } from '../../components/ui/Button';
 import { TextField } from '../../components/ui/TextField';
 
 export function RegisterPage() {
+  const navigate = useNavigate();
+  const iniciarSesion = useAuthStore((s) => s.iniciarSesion);
   const [correo, setCorreo] = useState('');
   const [password, setPassword] = useState('');
   const [nombreArtista, setNombreArtista] = useState('');
@@ -14,6 +17,7 @@ export function RegisterPage() {
   const [error, setError] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [listo, setListo] = useState(false);
+  const [verificacionPendiente, setVerificacionPendiente] = useState(true);
 
   useEffect(() => {
     if (nombreArtista.trim().length < 3) {
@@ -38,7 +42,23 @@ export function RegisterPage() {
     setError(null);
     setEnviando(true);
     try {
-      await api.post('/api/auth/registro', { correo, password, nombreArtista });
+      const { data } = await api.post<{ verificacionPendiente?: boolean }>('/api/auth/registro', {
+        correo,
+        password,
+        nombreArtista,
+      });
+      // Sin verificacion por correo la cuenta ya esta activa: se inicia sesion de una vez.
+      if (data.verificacionPendiente === false) {
+        setVerificacionPendiente(false);
+        try {
+          const login = await api.post('/api/auth/login', { correo, password });
+          iniciarSesion(login.data);
+          navigate('/feed');
+          return;
+        } catch {
+          // Si el login automatico falla, se muestra la confirmacion con el boton para entrar.
+        }
+      }
       setListo(true);
     } catch (err) {
       setError(extraerMensajeError(err));
@@ -56,13 +76,24 @@ export function RegisterPage() {
               <path d="M4 12l5 5L20 6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
-          <h1 className="mb-2 text-xl font-semibold text-ink-950">Revisa tu bandeja de entrada</h1>
-          <p className="text-sm text-ink-950/65">
-            Te mandamos un enlace para confirmar la cuenta de <strong className="text-ink-950">{correo}</strong>. En este
-            entorno de desarrollo, el enlace queda registrado en los logs del backend en vez de llegar por correo real.
-          </p>
+          {verificacionPendiente ? (
+            <>
+              <h1 className="mb-2 text-xl font-semibold text-ink-950">Revisa tu bandeja de entrada</h1>
+              <p className="text-sm text-ink-950/65">
+                Te mandamos un enlace para confirmar la cuenta de <strong className="text-ink-950">{correo}</strong>.
+                Si no lo ves en unos minutos, revisa la carpeta de spam.
+              </p>
+            </>
+          ) : (
+            <>
+              <h1 className="mb-2 text-xl font-semibold text-ink-950">Tu cuenta está lista</h1>
+              <p className="text-sm text-ink-950/65">
+                Ya puedes entrar con <strong className="text-ink-950">{correo}</strong>.
+              </p>
+            </>
+          )}
           <Link to="/login" className="btn-secondary mt-6 !bg-paper/80 !text-ink-950 !border-ink-950/15 hover:!text-violet-dark">
-            Ya la confirmé, entrar
+            {verificacionPendiente ? 'Ya la confirmé, entrar' : 'Entrar'}
           </Link>
         </motion.div>
       </CentroAuth>
