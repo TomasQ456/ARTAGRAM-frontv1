@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { api, extraerMensajeError } from '../../lib/api';
 import { stompService } from '../../lib/stompClient';
 import { useAuthStore } from '../../lib/authStore';
+import { Button } from '../../components/ui/Button';
 import { dibujarBorrado, dibujarPunto, dibujarSegmento, dibujarTrazoCompleto, type EstiloPincel } from '../../lib/canvasEngine';
 import { BrushToolbar, type Herramienta, type HerramientaFiesta } from '../canvas/BrushToolbar';
 import { PublishWizard } from '../feed/PublishWizard';
@@ -32,6 +33,12 @@ export function PartyRoomPage() {
   const [cargando, setCargando] = useState(true);
   const [aviso, setAviso] = useState<string | null>(null);
 
+  // Estados del flujo de rondas y fin de partida
+  const [juegoFinalizado, setJuegoFinalizado] = useState(false);
+  const [iniciandoRonda, setIniciandoRonda] = useState(false);
+  const [previewFinalUrl, setPreviewFinalUrl] = useState<string | null>(null);
+  const [totalTrazos, setTotalTrazos] = useState(0);
+
   // Exclusión mutua de herramientas: solo 1 persona por herramienta a la vez
   const [herramientasTomadas, setHerramientasTomadas] = useState<Record<string, string>>({});
   const [miHerramienta, setMiHerramienta] = useState<HerramientaFiesta | null>(null);
@@ -56,6 +63,11 @@ export function PartyRoomPage() {
 
   const esAnfitrion = !!(sala && sesion && sala.anfitrionNombre === sesion.nombreArtista);
   const enRonda = estado?.estadoSala === 'EN_RONDA';
+  const totalRondas = estado?.totalRondas ?? sala?.totalRondas ?? 3;
+  const numeroRonda = estado?.numeroRonda ?? sala?.numeroRonda ?? 0;
+  const terminado = juegoFinalizado || estado?.estadoSala === 'CERRADA' || (!enRonda && numeroRonda >= totalRondas && numeroRonda > 0);
+  const enEsperaInicial = !terminado && !enRonda && numeroRonda === 0;
+  const enIntermision = !terminado && !enRonda && numeroRonda > 0 && numeroRonda < totalRondas;
 
   const redibujarTodo = useCallback(() => {
     const ctx = ctxRef.current;
@@ -115,10 +127,15 @@ export function PartyRoomPage() {
       setEstado(data);
       enRondaRef.current = data.estadoSala === 'EN_RONDA';
       relojRef.current = { recibidoEn: performance.now(), msRestantes: data.msRestantes };
+      const tot = data.totalRondas ?? 3;
+      if (data.estadoSala === 'CERRADA' || (data.numeroRonda >= tot && data.estadoSala !== 'EN_RONDA' && data.numeroRonda > 0)) {
+        setJuegoFinalizado(true);
+      }
       for (const t of data.trazos) {
         trazosRef.current.set(t.secuencia, t);
         maxSecuenciaRef.current = Math.max(maxSecuenciaRef.current, t.secuencia);
       }
+      setTotalTrazos(data.trazos.length);
       redibujarTodo();
 
       // Consultar herramientas tomadas en la sala
@@ -138,6 +155,18 @@ export function PartyRoomPage() {
       setError(extraerMensajeError(err, 'No se pudo sincronizar la sala'));
     }
   }, [salaId, redibujarTodo, sesion?.nombreArtista]);
+
+  // Capturar vista previa al finalizar la partida
+  useEffect(() => {
+    if (terminado && canvasRef.current) {
+      try {
+        setPreviewFinalUrl(canvasRef.current.toDataURL('image/png'));
+        setTotalTrazos(trazosRef.current.size);
+      } catch {
+        // Ignorar
+      }
+    }
+  }, [terminado]);
 
   // Conexión en tiempo real vía STOMP
   useEffect(() => {
@@ -162,8 +191,10 @@ export function PartyRoomPage() {
         }
       } else if (evento.tipo === 'RONDA_TERMINADA') {
         enRondaRef.current = false;
-        setAviso('¡Ronda finalizada! Puedes seguir dibujando libremente o iniciar otra.');
-        setTimeout(() => setAviso(null), 4000);
+        cargarEstado();
+      } else if (evento.tipo === 'JUEGO_TERMINADO') {
+        enRondaRef.current = false;
+        setJuegoFinalizado(true);
         cargarEstado();
       } else if (evento.tipo === 'HERRAMIENTA_TOMADA' && evento.herramienta && evento.propietarioHerramienta) {
         setHerramientasTomadas((prev) => ({
@@ -260,6 +291,16 @@ export function PartyRoomPage() {
   }
 
   function alPresionar(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (terminado) {
+      setAviso('🎉 La partida ha finalizado. Puedes publicar la obra colaborativa o descargarla.');
+      setTimeout(() => setAviso(null), 3500);
+      return;
+    }
+    if (enEsperaInicial) {
+      setAviso('⏳ La partida aún no ha comenzado. El anfitrión debe iniciar la primera ronda.');
+      setTimeout(() => setAviso(null), 3500);
+      return;
+    }
     if (!miHerramienta) {
       setAviso('⚠️ Selecciona primero una herramienta disponible en la barra arriba (1 persona por herramienta).');
       setTimeout(() => setAviso(null), 3500);
@@ -415,11 +456,14 @@ export function PartyRoomPage() {
 
   async function iniciarRonda() {
     if (!salaId) return;
+    setIniciandoRonda(true);
     try {
       await api.post(`/api/fiestas/${salaId}/rondas`);
     } catch (err) {
       setAviso(extraerMensajeError(err));
       setTimeout(() => setAviso(null), 3000);
+    } finally {
+      setIniciandoRonda(false);
     }
   }
 
@@ -486,17 +530,28 @@ export function PartyRoomPage() {
 
         <div className="flex items-center gap-2">
           {/* Cronómetro aislado que no re-renderiza el lienzo ni la página */}
-          <CronometroRonda relojRef={relojRef} enRonda={enRonda} />
+          <CronometroRonda
+            relojRef={relojRef}
+            enRonda={enRonda}
+            numeroRonda={numeroRonda}
+            totalRondas={totalRondas}
+            terminado={terminado}
+          />
 
-          {esAnfitrion && (
-            <button
+          {esAnfitrion && !terminado && (
+            <Button
               type="button"
               onClick={iniciarRonda}
-              className="btn-secondary text-xs px-2.5 py-1.5 border border-ink-700 text-paper hover:border-paper"
-              title="Iniciar una ronda con reloj sincronizado"
+              cargando={iniciandoRonda}
+              className="text-xs px-2.5 py-1.5 border border-ink-700 bg-gradient-to-r from-coral to-violet text-white hover:brightness-110 shadow-sm"
+              title="Iniciar o avanzar a la siguiente ronda"
             >
-              {enRonda ? 'Reiniciar ronda' : 'Iniciar ronda con reloj'}
-            </button>
+              {enEsperaInicial
+                ? `🚀 Iniciar Ronda 1/${totalRondas}`
+                : enIntermision
+                ? `▶ Ronda ${numeroRonda + 1}/${totalRondas}`
+                : 'Reiniciar ronda'}
+            </Button>
           )}
 
           <button
@@ -576,8 +631,181 @@ export function PartyRoomPage() {
           onPointerLeave={alSoltar}
         />
 
+        {/* Pantalla de inicio / sala de espera previa a la primera ronda */}
+        {enEsperaInicial && !cargando && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-ink-950/70 p-4 backdrop-blur-sm text-center">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="card max-w-sm w-full p-6 flex flex-col items-center gap-4 border-violet/30 shadow-2xl bg-ink-900/95"
+            >
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-coral to-violet flex items-center justify-center text-3xl shadow-lg shadow-coral/20">
+                🎉
+              </div>
+              <div>
+                <h2 className="font-display text-xl font-bold text-paper">Sala de Espera</h2>
+                <p className="text-xs text-paper-dim mt-1">
+                  Código: <span className="font-mono font-bold text-violet">{sala?.codigo}</span>
+                </p>
+              </div>
+
+              <div className="w-full rounded-xl bg-ink-950/80 p-3 text-xs text-paper-muted space-y-2 border border-ink-800">
+                <div className="flex justify-between items-center">
+                  <span>Total de rondas:</span>
+                  <span className="font-bold text-paper px-2 py-0.5 rounded bg-ink-800 border border-ink-700">
+                    {totalRondas} rondas
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span>Tiempo por ronda:</span>
+                  <span className="font-semibold text-paper">{sala?.duracionRondaSegundos ?? 60}s</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span>Participantes:</span>
+                  <span className="font-semibold text-paper">
+                    {sala?.totalParticipantes ?? 1} / {sala?.cupoMaximo ?? 8}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span>Anfitrión:</span>
+                  <span className="font-semibold text-paper">{sala?.anfitrionNombre}</span>
+                </div>
+              </div>
+
+              {esAnfitrion ? (
+                <Button
+                  type="button"
+                  onClick={iniciarRonda}
+                  cargando={iniciandoRonda}
+                  className="w-full py-2.5 text-xs font-bold bg-gradient-to-r from-coral to-violet shadow-lg shadow-coral/30"
+                >
+                  🚀 Iniciar Partida (Ronda 1 de {totalRondas})
+                </Button>
+              ) : (
+                <div className="flex items-center gap-2 text-xs text-amber animate-pulse">
+                  <span>⏳</span>
+                  <span>Esperando a que {sala?.anfitrionNombre} inicie la ronda 1...</span>
+                </div>
+              )}
+            </motion.div>
+          </div>
+        )}
+
+        {/* Banner de intermisión entre rondas */}
+        {enIntermision && !cargando && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center">
+            <motion.div
+              initial={{ y: -10, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className="card px-5 py-3 flex items-center gap-4 border-amber/40 bg-ink-950/95 shadow-2xl backdrop-blur-md"
+            >
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">⏸</span>
+                  <span className="text-xs font-bold text-amber">
+                    ¡Ronda {numeroRonda} de {totalRondas} finalizada!
+                  </span>
+                </div>
+                <p className="text-[11px] text-paper-dim">Prepara tu próximo trazo con tu herramienta asignada.</p>
+              </div>
+              {esAnfitrion ? (
+                <Button
+                  type="button"
+                  onClick={iniciarRonda}
+                  cargando={iniciandoRonda}
+                  className="text-xs py-1.5 px-3 whitespace-nowrap bg-gradient-to-r from-coral to-violet"
+                >
+                  ▶ Ronda {numeroRonda + 1} de {totalRondas}
+                </Button>
+              ) : (
+                <span className="text-xs text-paper-dim animate-pulse whitespace-nowrap">
+                  Esperando al anfitrión...
+                </span>
+              )}
+            </motion.div>
+          </div>
+        )}
+
+        {/* Pantalla final de la partida al completar todas las rondas */}
+        {terminado && !cargando && (
+          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-ink-950/90 p-4 backdrop-blur-md overflow-y-auto">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="card max-w-lg w-full p-6 flex flex-col items-center gap-4 border-violet/40 shadow-2xl text-center bg-ink-900/95"
+            >
+              <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-coral to-violet flex items-center justify-center text-3xl shadow-lg shadow-violet/30">
+                🎉
+              </div>
+              <div>
+                <h2 className="font-display text-2xl font-bold text-paper">¡Partida Finalizada!</h2>
+                <p className="text-xs text-paper-dim mt-1">
+                  Se completaron las <span className="text-paper font-semibold">{totalRondas} rondas</span> colaborativas.
+                </p>
+              </div>
+
+              {/* Vista previa de la obra completada */}
+              <div className="w-full max-h-56 overflow-hidden rounded-xl border border-ink-700 bg-[#F5F1EA] shadow-inner flex items-center justify-center p-1">
+                {previewFinalUrl ? (
+                  <img
+                    src={previewFinalUrl}
+                    alt="Obra colaborativa final"
+                    className="max-h-52 object-contain rounded-lg shadow-sm"
+                  />
+                ) : (
+                  <div className="h-40 flex items-center justify-center text-xs text-paper-dim">
+                    Lienzo colaborativo finalizado
+                  </div>
+                )}
+              </div>
+
+              {/* Estadísticas de la partida */}
+              <div className="grid grid-cols-3 gap-2 w-full text-xs">
+                <div className="rounded-lg bg-ink-950 p-2.5 border border-ink-800">
+                  <p className="text-paper-dim text-[10px]">Rondas</p>
+                  <p className="font-bold text-paper text-sm">{totalRondas} / {totalRondas}</p>
+                </div>
+                <div className="rounded-lg bg-ink-950 p-2.5 border border-ink-800">
+                  <p className="text-paper-dim text-[10px]">Trazos hechos</p>
+                  <p className="font-bold text-paper text-sm">{totalTrazos}</p>
+                </div>
+                <div className="rounded-lg bg-ink-950 p-2.5 border border-ink-800">
+                  <p className="text-paper-dim text-[10px]">Artistas</p>
+                  <p className="font-bold text-paper text-sm">{sala?.totalParticipantes ?? 1}</p>
+                </div>
+              </div>
+
+              {/* Botones de acción principales */}
+              <div className="flex flex-col sm:flex-row gap-2 w-full pt-2">
+                <Button
+                  type="button"
+                  onClick={abrirPublicar}
+                  className="flex-1 py-2 text-xs font-semibold bg-gradient-to-r from-coral to-violet shadow-lg shadow-coral/30"
+                >
+                  🎨 Publicar en el Feed
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={descargarSnapshot}
+                  className="flex-1 py-2 text-xs border-ink-700 hover:border-paper"
+                >
+                  📥 Descargar PNG
+                </Button>
+              </div>
+
+              <Link
+                to="/fiesta"
+                className="text-xs text-paper-dim hover:text-paper underline transition-colors pt-1"
+              >
+                Volver al lobby del Modo Fiesta
+              </Link>
+            </motion.div>
+          </div>
+        )}
+
         {/* Indicador de ayuda si no tiene herramienta seleccionada */}
-        {!miHerramienta && !cargando && (
+        {!miHerramienta && !cargando && !enEsperaInicial && !terminado && (
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 pointer-events-none rounded-full bg-ink-900/80 px-4 py-1.5 text-xs text-paper-dim border border-ink-700/80 shadow-md backdrop-blur-sm">
             👆 Elige una de las herramientas disponibles arriba para comenzar a pintar
           </div>
@@ -607,9 +835,15 @@ export function PartyRoomPage() {
 function CronometroRonda({
   relojRef,
   enRonda,
+  numeroRonda,
+  totalRondas,
+  terminado,
 }: {
   relojRef: React.RefObject<{ recibidoEn: number; msRestantes: number }>;
   enRonda: boolean;
+  numeroRonda: number;
+  totalRondas: number;
+  terminado: boolean;
 }) {
   const [ms, setMs] = useState(0);
 
@@ -625,10 +859,25 @@ function CronometroRonda({
     return () => clearInterval(intervalo);
   }, [enRonda, relojRef]);
 
-  if (!enRonda) {
+  if (terminado) {
     return (
-      <div className="rounded-xl border border-ink-700 bg-ink-900/60 px-3 py-1 font-display text-sm font-semibold text-paper-dim">
-        🎨 Dibujo libre
+      <div className="rounded-xl border border-violet/50 bg-violet/15 px-3 py-1 font-display text-xs font-semibold text-violet-300">
+        🏆 Partida finalizada ({totalRondas}/{totalRondas})
+      </div>
+    );
+  }
+
+  if (!enRonda) {
+    if (numeroRonda === 0) {
+      return (
+        <div className="rounded-xl border border-ink-700 bg-ink-900/60 px-3 py-1 font-display text-xs font-semibold text-paper-dim">
+          ⏳ Esperando inicio · 0/{totalRondas} rondas
+        </div>
+      );
+    }
+    return (
+      <div className="rounded-xl border border-amber/40 bg-amber/15 px-3 py-1 font-display text-xs font-semibold text-amber">
+        ⏸ Ronda {numeroRonda}/{totalRondas}
       </div>
     );
   }
@@ -638,8 +887,8 @@ function CronometroRonda({
   const ss = String(segundos % 60).padStart(2, '0');
 
   return (
-    <div className="rounded-xl border border-teal/50 bg-teal/15 px-3 py-1 font-display text-sm font-semibold tabular-nums text-teal">
-      ⏱ {mm}:{ss}
+    <div className="rounded-xl border border-teal/50 bg-teal/15 px-3 py-1 font-display text-xs font-semibold tabular-nums text-teal">
+      ⏱ {mm}:{ss} · Ronda {numeroRonda}/{totalRondas}
     </div>
   );
 }

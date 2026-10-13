@@ -86,6 +86,7 @@ export interface SalaFiestaResponse {
   estado: 'ESPERANDO' | 'EN_RONDA' | 'CERRADA';
   totalParticipantes: number;
   numeroRonda: number;
+  totalRondas?: number;
 }
 
 export interface PartyTrazoDto {
@@ -103,6 +104,7 @@ export interface PartyTrazoDto {
 export interface EstadoRondaResponse {
   estadoSala: string;
   numeroRonda: number;
+  totalRondas?: number;
   msRestantes: number;
   pincel: TipoPincel | null;
   colorHex: string | null;
@@ -116,6 +118,7 @@ export interface PartyEvento {
   tipo:
     | 'TICK'
     | 'RONDA_TERMINADA'
+    | 'JUEGO_TERMINADO'
     | 'BORRADOR_DISPONIBLE'
     | 'BORRADOR_TOMADO'
     | 'BORRADOR_LIBERADO'

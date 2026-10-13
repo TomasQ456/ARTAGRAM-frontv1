@@ -15,6 +15,7 @@ export function PartyLobbyPage() {
 
   const [duracion, setDuracion] = useState(60);
   const [cupo, setCupo] = useState(8);
+  const [rondas, setRondas] = useState(3);
   const [codigo, setCodigo] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
@@ -52,6 +53,7 @@ export function PartyLobbyPage() {
       const { data } = await api.post<SalaFiestaResponse>('/api/fiestas', {
         duracionRondaSegundos: duracion,
         cupoMaximo: cupo,
+        totalRondas: rondas,
       });
       navigate(`/fiesta/${data.id}`);
     } catch (err) {
@@ -141,6 +143,14 @@ export function PartyLobbyPage() {
               max={600}
               value={duracion}
               onChange={(e) => setDuracion(Number(e.target.value))}
+            />
+            <TextField
+              label="Número de rondas"
+              type="number"
+              min={1}
+              max={10}
+              value={rondas}
+              onChange={(e) => setRondas(Math.max(1, Math.min(10, Number(e.target.value))))}
             />
             <TextField
               label="Cupo máximo"
@@ -264,7 +274,10 @@ export function PartyLobbyPage() {
                         <p className="text-paper-dim">
                           Participantes: <span className="text-paper">{s.totalParticipantes}</span> / {s.cupoMaximo}
                         </p>
-                        <p className="text-paper-dim">Rondas de {s.duracionRondaSegundos}s</p>
+                        <p className="text-paper-dim">
+                          Rondas: <span className="text-paper">{s.numeroRonda}</span> de{' '}
+                          <span className="text-paper">{s.totalRondas ?? 3}</span> ({s.duracionRondaSegundos}s c/u)
+                        </p>
                       </div>
                     </div>
 
