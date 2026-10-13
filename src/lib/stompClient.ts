@@ -10,7 +10,10 @@ import { WS_URL } from './api';
 class StompService {
   private client: Client | null = null;
   private tokenActual: string | null = null;
-  private listosParaSuscribir: Array<() => void> = [];
+  // Suscripciones activas: se (re)aplican en cada conexion, incluidas las
+  // reconexiones automaticas, y salen del conjunto al desuscribirse.
+  private suscripcionesActivas = new Set<() => void>();
+  private callbacksAlConectar = new Set<() => void>();
 
   conectar(token: string): void {
     if (this.client?.active && this.tokenActual === token) {
@@ -26,7 +29,8 @@ class StompService {
       heartbeatIncoming: 10000,
       heartbeatOutgoing: 10000,
       onConnect: () => {
-        this.listosParaSuscribir.forEach((fn) => fn());
+        this.suscripcionesActivas.forEach((fn) => fn());
+        this.callbacksAlConectar.forEach((fn) => fn());
       },
     });
     this.client.activate();
@@ -41,7 +45,10 @@ class StompService {
     return !!this.client?.connected;
   }
 
-  /** Se re-suscribe solo tras cada reconexion (util cuando se cae la red). */
+  /**
+   * Se suscribe ahora si hay conexion y se re-suscribe sola tras cada
+   * reconexion (util cuando se cae la red), hasta llamar a la funcion devuelta.
+   */
   suscribir<T>(destino: string, callback: (payload: T) => void): () => void {
     let subscripcion: StompSubscription | null = null;
     const suscribirAhora = () => {
@@ -54,13 +61,20 @@ class StompService {
       });
     };
 
+    this.suscripcionesActivas.add(suscribirAhora);
     if (this.client?.connected) {
       suscribirAhora();
-    } else {
-      this.listosParaSuscribir.push(suscribirAhora);
     }
 
-    return () => subscripcion?.unsubscribe();
+    return () => {
+      this.suscripcionesActivas.delete(suscribirAhora);
+      try {
+        if (this.client?.connected) subscripcion?.unsubscribe();
+      } catch {
+        // la conexion se cerro en el medio: no queda nada que desuscribir
+      }
+      subscripcion = null;
+    };
   }
 
   publicar(destino: string, body: unknown): void {
@@ -75,9 +89,9 @@ class StompService {
       callback();
       return () => {};
     }
-    this.listosParaSuscribir.push(callback);
+    this.callbacksAlConectar.add(callback);
     return () => {
-      this.listosParaSuscribir = this.listosParaSuscribir.filter((f) => f !== callback);
+      this.callbacksAlConectar.delete(callback);
     };
   }
 }

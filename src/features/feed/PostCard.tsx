@@ -13,6 +13,7 @@ import type {
   ComentarioEvento,
   LikeResponse,
   PublicacionDto,
+  LikeEvento,
 } from '../../types';
 
 interface PostCardProps {
@@ -46,6 +47,7 @@ export function PostCard({ publicacion, onEliminada, onActualizada }: PostCardPr
   const [comentariosAbiertos, setComentariosAbiertos] = useState(false);
   const [comentarios, setComentarios] = useState<ComentarioDto[]>([]);
   const [cargandoComentarios, setCargandoComentarios] = useState(false);
+  const [comentariosCargados, setComentariosCargados] = useState(false);
   const [nuevoComentario, setNuevoComentario] = useState('');
   const [enviandoComentario, setEnviandoComentario] = useState(false);
   const [contadorComentarios, setContadorComentarios] = useState(pub.contadorComentarios ?? 0);
@@ -60,35 +62,44 @@ export function PostCard({ publicacion, onEliminada, onActualizada }: PostCardPr
 
   const esAutor = sesion?.usuarioId === pub.autorId;
 
-  // Suscripción STOMP en tiempo real a los comentarios de esta publicación
+  // El feed también necesita la conexión en tiempo real (es idempotente si ya está abierta)
   useEffect(() => {
-    if (!comentariosAbiertos) return;
+    if (sesion?.accessToken) stompService.conectar(sesion.accessToken);
+  }, [sesion?.accessToken]);
 
-    const destino = `/topic/publicaciones/${pub.id}/comentarios`;
-    const desuscribir = stompService.suscribir<ComentarioEvento>(destino, (evento) => {
-      if (evento.tipo === 'COMENTARIO_CREADO' && evento.comentario) {
-        setComentarios((prev) => {
-          if (prev.some((c) => c.id === evento.comentario.id)) return prev;
-          return [...prev, evento.comentario];
-        });
-        setContadorComentarios(evento.contadorComentarios);
+  // Likes y comentarios en vivo: se escuchan siempre (no solo con el panel abierto)
+  // para que los contadores se actualicen en todas las pantallas sin recargar.
+  useEffect(() => {
+    const base = `/topic/publicaciones/${pub.id}`;
+    const desuscribirLikes = stompService.suscribir<LikeEvento>(`${base}/likes`, (evento) => {
+      setContadorLikes(evento.contadorLikes);
+    });
+    const desuscribirComentarios = stompService.suscribir<ComentarioEvento>(`${base}/comentarios`, (evento) => {
+      if (!evento.comentario) return;
+      setContadorComentarios(evento.contadorComentarios);
+      if (evento.tipo === 'COMENTARIO_CREADO') {
+        setComentarios((prev) => (prev.some((c) => c.id === evento.comentario.id) ? prev : [...prev, evento.comentario]));
+      } else {
+        setComentarios((prev) => prev.filter((c) => c.id !== evento.comentario.id));
       }
     });
-
     return () => {
-      desuscribir?.();
+      desuscribirLikes();
+      desuscribirComentarios();
     };
-  }, [comentariosAbiertos, pub.id]);
+  }, [pub.id]);
 
   // Cargar comentarios iniciales al desplegar
   async function toggleComentarios() {
     const nuevoEstado = !comentariosAbiertos;
     setComentariosAbiertos(nuevoEstado);
-    if (nuevoEstado && comentarios.length === 0) {
+    if (nuevoEstado && !comentariosCargados) {
       setCargandoComentarios(true);
       try {
         const { data } = await api.get<ComentarioDto[]>(`/api/publicaciones/${pub.id}/comentarios`);
-        setComentarios(data);
+        // Combina con los que hayan llegado en vivo mientras cargaba, sin duplicar
+        setComentarios((enVivo) => [...data, ...enVivo.filter((c) => !data.some((d) => d.id === c.id))]);
+        setComentariosCargados(true);
       } catch (err) {
         setErrorComentario(extraerMensajeError(err, 'No se pudieron cargar los comentarios'));
       } finally {

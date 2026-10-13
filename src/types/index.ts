@@ -183,6 +183,12 @@ export interface ComentarioDto {
   creadoEn: string;
 }
 
+export interface LikeEvento {
+  tipo: 'LIKES_ACTUALIZADOS';
+  publicacionId: string;
+  contadorLikes: number;
+}
+
 export interface ComentarioEvento {
   tipo: 'COMENTARIO_CREADO' | 'COMENTARIO_ELIMINADO';
   comentario: ComentarioDto;
